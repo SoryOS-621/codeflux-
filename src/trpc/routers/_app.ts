@@ -18,6 +18,21 @@ export const appRouter = createTRPCRouter({
       })
     }),
 
+  invokeWriter: baseProcedure
+    .input(
+      z.object({
+        value: z.string()
+      })
+    )
+    .mutation(async ({ input }) =>{
+      await inngest.send({
+        name: "app/writerEvent",
+        data: {
+          value: input.value,
+        }
+      })
+    }),
+
   hi: baseProcedure
     .input(
       z.object({
