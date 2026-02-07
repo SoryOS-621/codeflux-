@@ -1,10 +1,10 @@
 import 'dotenv/config'
 import { Sandbox } from '@e2b/code-interpreter'
-
+import z from 'zod';
 import { inngest } from "./client";
-import { gemini, createAgent } from "@inngest/agent-kit";
-import { AwardIcon } from 'lucide-react';
-import { getSandbox } from './utils';
+import { gemini, createAgent, createTool, createNetwork } from "@inngest/agent-kit";
+import { getSandbox, lastAssistantTextMessageContent } from './utils';
+import { PROMPT } from '@/prompt';
 
 // export const helloWorld = inngest.createFunction(
 //   { id: "hello-world" },
@@ -15,9 +15,9 @@ import { getSandbox } from './utils';
 //   },
 // );
 
-export const writer = inngest.createFunction(
-  { id: "writer" },
-  { event: "app/writerEvent" },
+export const developer = inngest.createFunction(
+  { id: "developer" },
+  { event: "app/developerEvent" },
   async ({ event, step }) => {
     const sandBoxId = await step.run("get-sandbox-id", async () => {
       const sandbox = await Sandbox.create("dhruvb2028/codeflux-nextjs-test-2")
@@ -25,16 +25,145 @@ export const writer = inngest.createFunction(
     })
 
     // Create a new agent with a system prompt (you can add optional tools, too)
-    const writerAgent = createAgent({
-      name: "coder",
-      system: "You are an experienced React and Next JS software engineer. You write clean, simple, maintainable code.",
-      model: gemini({model:"gemini-2.5-flash", apiKey: process.env.GEMINI_API_KEY}),
+    const codeAgent = createAgent({
+      name: "code-agent",
+      description: "An experienced software development engineer.",
+      system: PROMPT,
+      model: gemini({
+        model: "gemini-2.5-flash", 
+        apiKey: process.env.GEMINI_API_KEY,
+        defaultParameters: {
+          generationConfig: {
+            temperature: 0.1,
+          }
+        }
+      }),
+      tools: [
+        // Terminal Tool
+        createTool({
+          name: "terminal",
+          description: "Use the terminal to run commands",
+          parameters: z.object({
+            command: z.string(),
+          }),
+          handler: async ({command}, {step}) => {
+            return await step?.run("terminal", async ()=>{
+              const buffers = { stdout: "", stderr: ""}
+
+              try {
+                const sandbox = await getSandbox(sandBoxId);
+                const result = await sandbox.commands.run(command, {
+                  onStdout: (data: string) => {
+                    buffers.stdout += data;
+                  },
+                  onStderr: (data:string) => {
+                    buffers.stderr += data;
+                  }
+                })
+                return result.stdout;
+              } catch (e) {
+                console.log(`Command Failed: ${e} \n stdout: ${buffers.stdout} \n stderror: ${buffers.stderr}`)
+              }
+            })
+          }
+        }),
+
+        // Create or Update Files Tool
+        createTool({
+          name: "createOrUpdateFiles",
+          description: "Create or update files in the sandbox",
+          parameters: z.object({
+            files: z.array(
+              z.object({
+                path: z.string(),
+                content: z.string(), 
+              })
+            )
+          }),
+          handler: async ({files}, {step, network})=> {
+            const newFiles = await step?.run("createOrUpdateFiles", async ()=>{
+              try {
+                const updatedFiles = network.state.data.files || {};
+                const sandbox = await getSandbox(sandBoxId);
+                for(const file of files){
+                  await sandbox.files.write(file.path, file.content);
+                  updatedFiles[file.path] = file.content;
+                }
+                return updatedFiles
+
+              } catch (e) {
+                return "Error: " + e;
+              }
+
+            })
+
+            if(typeof newFiles==="object"){
+              network.state.data.files = newFiles;
+            }
+          }
+      
+        }),
+
+        // Read Files Tool
+        createTool({
+          name: "readFiles",
+          description: "Read files from the sandbox.",
+          parameters: z.object({
+            files: z.array(z.string()),
+          }),
+          handler: async ({files}, {step})=> {
+            return await step?.run("readFiles", async ()=>{
+              try {
+                const sandbox = await getSandbox(sandBoxId);
+                const contents = [];
+                for(const file of files){
+                  const content = await sandbox.files.read(file);
+                  contents.push({path:file, content})
+                }
+                return JSON.stringify(contents);
+
+              } catch (e) {
+                return "Error: "+ e;
+              }
+            })
+          }
+        })
+      ],
+
+      //LifeCycle
+      lifecycle:{
+        onResponse: async ({result, network}) => {
+          const lastAssistantMessageText = 
+          lastAssistantTextMessageContent(result)
+
+          if(lastAssistantMessageText && network){
+            if(lastAssistantMessageText.includes("<task_summary>")){
+              network.state.data.summary = lastAssistantMessageText;
+            }
+          }
+
+          return result;
+        },
+      }
     });
     
+    const network = createNetwork({
+      name: "coding-agent-network",
+      agents: [codeAgent],
+      maxIter: 15,
+      router: async ({network})=>{
+        const summary = network.state.data.summary;
+
+        if(summary) return;
+
+        return codeAgent;
+      }
+    })
 
     // Run the agent with an input.  This automatically uses steps
     // to call your AI model.
-    const {output} = await writerAgent.run(`Write the code snippets for following task: ${event.data.value}`);
+    const result = await network.run(event.data.value);
+    // const {output} = await codeAgent.run(`Write the code snippets for following task: ${event.data.value}`);
 
     const sandboxUrl = await step.run("get-sandbox-url", async ()=> {
       const sandbox = await getSandbox(sandBoxId);
@@ -43,7 +172,12 @@ export const writer = inngest.createFunction(
 
     })
 
-    return {output, sandboxUrl}
+    return {
+      url: sandboxUrl,
+      title: "Fragment",
+      files: result.state.data.files,
+      summmary: result.state.data.summary,
+    }
   }
 );
 

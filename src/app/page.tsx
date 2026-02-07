@@ -17,7 +17,7 @@ const Page = () => {
   //     toast.success("Background Job Started");
   //   }
   // }));
-  const invokeWriter = useMutation(trpc.invokeWriter.mutationOptions({
+  const invokeDeveloper = useMutation(trpc.invokeDeveloper.mutationOptions({
     onSuccess: ()=>{
       toast.success("Background Job Started");
     }
@@ -31,7 +31,7 @@ const Page = () => {
 
       {/* <br /><br /><br /> */}
       <Input value={description} onChange={(e) => setDescription(e.target.value)} />
-      <Button disabled={invokeWriter.isPending} onClick={() => invokeWriter.mutate({value: description})}>
+      <Button disabled={invokeDeveloper.isPending} onClick={() => invokeDeveloper.mutate({value: description})}>
         Invoke Writer Background Job
       </Button>
     

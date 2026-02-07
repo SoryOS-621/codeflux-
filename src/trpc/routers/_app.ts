@@ -18,7 +18,7 @@ export const appRouter = createTRPCRouter({
       })
     }),
 
-  invokeWriter: baseProcedure
+  invokeDeveloper: baseProcedure
     .input(
       z.object({
         value: z.string()
@@ -26,7 +26,7 @@ export const appRouter = createTRPCRouter({
     )
     .mutation(async ({ input }) =>{
       await inngest.send({
-        name: "app/writerEvent",
+        name: "app/developerEvent",
         data: {
           value: input.value,
         }
