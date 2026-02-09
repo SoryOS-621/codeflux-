@@ -4,7 +4,7 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 export const Client = () => {
   const trpc = useTRPC();
   const { data } = useSuspenseQuery(
-    trpc.hello.queryOptions({ text: "Antonio PREFETCH" }),
+    trpc.hello.queryOptions({ text: "Dhruv PREFETCH" }),
   );
   return <div>{JSON.stringify(data)}</div>;
 };
