@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { Sandbox } from '@e2b/code-interpreter'
 import z from 'zod';
 import { inngest } from "./client";
-import { gemini, createAgent, createTool, createNetwork, Tool } from "@inngest/agent-kit";
+import { openai, createAgent, createTool, createNetwork, Tool } from "@inngest/agent-kit";
 import { getSandbox, lastAssistantTextMessageContent } from './utils';
 import { PROMPT } from '@/prompt';
 import prisma from '@/lib/prisma';
@@ -26,13 +26,12 @@ export const developer = inngest.createFunction(
       name: "code-agent",
       description: "An experienced software development engineer.",
       system: PROMPT,
-      model: gemini({
-        model: "gemini-2.5-flash", 
-        apiKey: process.env.GEMINI_API_KEY,
+      model: openai({
+        model: "openai/gpt-oss-120b:free", // Free model from OpenRouter
+        apiKey: process.env.OPENROUTER_API_KEY!,
+        baseUrl: "https://openrouter.ai/api/v1",
         defaultParameters: {
-          generationConfig: {
-            temperature: 0.1,
-          }
+          temperature: 0.1,
         }
       }),
       tools: [
