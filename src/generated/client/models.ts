@@ -8,6 +8,7 @@
  *
  * 🟢 You can import this file directly.
  */
+export type * from './models/Project'
 export type * from './models/Message'
 export type * from './models/Fragment'
 export type * from './commonInputTypes'
