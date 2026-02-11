@@ -7,6 +7,50 @@ import { getSandbox, lastAssistantTextMessageContent } from './utils';
 import { PROMPT } from '@/prompt';
 import prisma from '@/lib/prisma';
 
+/**
+ * Forcefully rewrites directory-listing commands so that node_modules
+ * is excluded at the shell level — the directory is never even traversed.
+ */
+function sanitizeCommand(raw: string): string {
+  // Split on pipes to handle each segment independently
+  const segments = raw.split('|');
+  const rewritten = segments.map((seg) => {
+    const trimmed = seg.trim();
+
+    // ls — use --ignore flag so node_modules is never listed
+    if (/^ls\b/.test(trimmed)) {
+      // Avoid duplicate --ignore if already present
+      if (!trimmed.includes('--ignore') || !trimmed.includes('node_modules')) {
+        return ` ${trimmed} --ignore='node_modules'`;
+      }
+    }
+
+    // find — use -prune so the directory is never descended into
+    if (/^find\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      // Extract the find path (second token) and the rest of the arguments
+      const tokens = trimmed.split(/\s+/);
+      const findCmd = tokens[0]; // "find"
+      const findPath = tokens[1] || '.'; // path argument
+      const rest = tokens.slice(2).join(' ');
+      return ` ${findCmd} ${findPath} -name 'node_modules' -prune -o ${rest || '-print'} ${rest ? '' : ''}`.replace(/\s+$/, '');
+    }
+
+    // tree — use -I so node_modules is never traversed
+    if (/^tree\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      return ` ${trimmed} -I 'node_modules'`;
+    }
+
+    // du — use --exclude so node_modules is skipped entirely
+    if (/^du\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      return ` ${trimmed} --exclude='node_modules'`;
+    }
+
+    return seg;
+  });
+
+  return rewritten.join('|');
+}
+
 interface AgentState {
   summary: string;
   files: { [path: string]: string };
@@ -47,9 +91,12 @@ export const developer = inngest.createFunction(
             return await step?.run("terminal", async ()=>{
               const buffers = { stdout: "", stderr: ""}
 
+              // Forcefully exclude node_modules from ls, find, tree, and similar directory listing commands
+              const sanitizedCommand = sanitizeCommand(command);
+
               try {
                 const sandbox = await getSandbox(sandBoxId);
-                const result = await sandbox.commands.run(command, {
+                const result = await sandbox.commands.run(sanitizedCommand, {
                   onStdout: (data: string) => {
                     buffers.stdout += data;
                   },
