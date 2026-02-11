@@ -211,8 +211,38 @@ export const developer = inngest.createFunction(
 
     // Run the agent with an input.  This automatically uses steps
     // to call your AI model.
-    const result = await network.run(event.data.value);
-    // const {output} = await codeAgent.run(`Write the code snippets for following task: ${event.data.value}`);
+    let result;
+    try {
+      result = await network.run(event.data.value);
+    } catch (e) {
+      const errStr = String(e);
+      console.error("[CodeFlux] Upstream AI error (not a CodeFlux bug):", errStr.slice(0, 300));
+
+      let userMessage: string;
+      if (errStr.includes("Failed to parse JSON") || errStr.includes("Expected ','")) {
+        userMessage = "⚠️ AI model returned broken JSON. Free model likely crashed mid-response. Retry or switch model.";
+      } else if (errStr.includes("401") || errStr.includes("403") || errStr.includes("Unauthorized")) {
+        userMessage = "⚠️ API key rejected. Check OPENROUTER_API_KEY in .env (no trailing spaces).";
+      } else if (errStr.includes("429") || errStr.includes("rate limit")) {
+        userMessage = "⚠️ Rate limited. Wait a minute and retry.";
+      } else if (errStr.includes("502") || errStr.includes("503") || errStr.includes("timeout")) {
+        userMessage = "⚠️ AI provider down/timed out. Retry later or switch model.";
+      } else {
+        userMessage = `⚠️ Upstream AI error: ${errStr.slice(0, 150)}`;
+      }
+
+      await step.run("save-error", async () => {
+        return await prisma.message.create({
+          data: {
+            projectId: event.data.projectId,
+            content: userMessage,
+            role: "ASSISTANT",
+            type: "ERROR",
+          },
+        });
+      });
+      return { error: userMessage };
+    }
 
     const isError =
       !result.state.data.summary ||
@@ -226,10 +256,18 @@ export const developer = inngest.createFunction(
 
     await step.run("save-result", async () => {
       if (isError) {
+        const hasSummary = !!result.state.data.summary;
+        const hasFiles = Object.keys(result.state.data.files || {}).length > 0;
+        const detail = !hasSummary && !hasFiles
+          ? "No summary and no files were generated."
+          : !hasSummary
+          ? "Files were created but the model never produced a <task_summary>."
+          : "Summary exists but no files were written to the sandbox.";
+
         return await prisma.message.create({
           data: {
             projectId: event.data.projectId,
-            content: "Something went wrong. Please try again later.",
+            content: `⚠️ Agent ran ${network.state.results.length} iteration(s) but result is incomplete. ${detail} This usually means the model ran out of tokens, got stuck in a loop, or the prompt was too complex. Try a shorter/simpler prompt or switch to a stronger model.`,
             role: "ASSISTANT",
             type: "ERROR",
           },
