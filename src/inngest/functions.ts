@@ -8,8 +8,8 @@ import { PROMPT } from '@/prompt';
 import prisma from '@/lib/prisma';
 
 interface AgentState {
-  summary : string,
-  files: {[path: string] : string}
+  summary: string;
+  files: { [path: string]: string };
 }
 
 export const developer = inngest.createFunction(
@@ -17,9 +17,9 @@ export const developer = inngest.createFunction(
   { event: "app/developerEvent" },
   async ({ event, step }) => {
     const sandBoxId = await step.run("get-sandbox-id", async () => {
-      const sandbox = await Sandbox.create("dhruvb2028/codeflux-nextjs-test-2")
+      const sandbox = await Sandbox.create("dhruvb2028/codeflux-nextjs-test-3");
       return sandbox.sandboxId;
-    })
+    });
 
     // Create a new agent with a system prompt (you can add optional tools, too)
     const codeAgent = createAgent<AgentState>({
@@ -32,13 +32,14 @@ export const developer = inngest.createFunction(
         baseUrl: "https://openrouter.ai/api/v1",
         defaultParameters: {
           temperature: 0.1,
-        }
+        },
       }),
       tools: [
         // Terminal Tool
         createTool({
           name: "terminal",
-          description: "Use the terminal to run commands",
+          description:
+            "Run shell commands for inspection and installs. Always limit output size. Use commands like: ls | head, ls app, find app -maxdepth 2, or tree -L 2. Never run plain ls on large folders like node_modules.",
           parameters: z.object({
             command: z.string(),
           }),
@@ -52,7 +53,7 @@ export const developer = inngest.createFunction(
                   onStdout: (data: string) => {
                     buffers.stdout += data;
                   },
-                  onStderr: (data:string) => {
+                  onStderr: (data: string) => {
                     buffers.stderr += data;
                   }
                 })
@@ -60,55 +61,60 @@ export const developer = inngest.createFunction(
               } catch (e) {
                 console.log(`Command Failed: ${e} \n stdout: ${buffers.stdout} \n stderror: ${buffers.stderr}`)
               }
-            })
-          }
+            });
+          },
         }),
 
         // Create or Update Files Tool
         createTool({
           name: "createOrUpdateFiles",
-          description: "Create or update files in the sandbox",
+          description:
+            "Create or update files in the sandbox. Use this for ALL code and content changes. Each path must be relative. Do NOT use absolute paths. Do NOT paste full files in chat—apply changes through this tool.",
           parameters: z.object({
             files: z.array(
               z.object({
                 path: z.string(),
-                content: z.string(), 
-              })
-            )
+                content: z.string(),
+              }),
+            ),
           }),
-          handler: async ({files}, {step, network} : Tool.Options<AgentState>)=> {
-            const newFiles = await step?.run("createOrUpdateFiles", async ()=>{
-              try {
-                const updatedFiles = network.state.data.files || {};
-                const sandbox = await getSandbox(sandBoxId);
+          handler: async (
+            { files },
+            { step, network }: Tool.Options<AgentState>,
+          ) => {
+            const newFiles = await step?.run(
+              "createOrUpdateFiles",
+              async () => {
+                try {
+                  const updatedFiles = network.state.data.files || {};
+                  const sandbox = await getSandbox(sandBoxId);
                 for(const file of files){
                   await sandbox.files.write(file.path, file.content);
-                  updatedFiles[file.path] = file.content;
+                    updatedFiles[file.path] = file.content;
+                  }
+                  return updatedFiles;
+                } catch (e) {
+                  return "Error: " + e;
                 }
-                return updatedFiles
+              },
+            );
 
-              } catch (e) {
-                return "Error: " + e;
-              }
-
-            })
-
-            if(typeof newFiles==="object"){
+            if (typeof newFiles === "object") {
               network.state.data.files = newFiles;
             }
-          }
-      
+          },
         }),
 
         // Read Files Tool
         createTool({
           name: "readFiles",
-          description: "Read files from the sandbox.",
+          description:
+            "Read the contents of existing files in the sandbox. Use this ONLY for real files with known paths. Do NOT use on folders. Use terminal (ls, find) to explore directories first.",
           parameters: z.object({
             files: z.array(z.string()),
           }),
-          handler: async ({files}, {step})=> {
-            return await step?.run("readFiles", async ()=>{
+          handler: async ({ files }, { step }) => {
+            return await step?.run("readFiles", async () => {
               try {
                 const sandbox = await getSandbox(sandBoxId);
                 const contents = [];
@@ -119,67 +125,68 @@ export const developer = inngest.createFunction(
                 return JSON.stringify(contents);
 
               } catch (e) {
-                return "Error: "+ e;
+                return "Error: " + e;
               }
-            })
-          }
-        })
+            });
+          },
+        }),
       ],
 
       //LifeCycle
-      lifecycle:{
-        onResponse: async ({result, network}) => {
-          const lastAssistantMessageText = 
-          lastAssistantTextMessageContent(result)
+      lifecycle: {
+        onResponse: async ({ result, network }) => {
+          const lastAssistantMessageText =
+            lastAssistantTextMessageContent(result);
 
-          if(lastAssistantMessageText && network){
-            if(lastAssistantMessageText.includes("<task_summary>")){
+          if (lastAssistantMessageText && network) {
+            if (lastAssistantMessageText.includes("<task_summary>")) {
               network.state.data.summary = lastAssistantMessageText;
             }
           }
 
           return result;
         },
-      }
+      },
     });
-    
+
     const network = createNetwork<AgentState>({
       name: "coding-agent-network",
       agents: [codeAgent],
-      maxIter: 15,
-      router: async ({network})=>{
+      maxIter: 10,
+      router: async ({ network }) => {
         const summary = network.state.data.summary;
 
-        if(summary) return;
+        if (summary) return;
 
         return codeAgent;
-      }
-    })
+      },
+    });
 
     // Run the agent with an input.  This automatically uses steps
     // to call your AI model.
     const result = await network.run(event.data.value);
     // const {output} = await codeAgent.run(`Write the code snippets for following task: ${event.data.value}`);
 
-    const isError = !result.state.data.summary || Object.keys(result.state.data.files || {}).length ===0;
+    const isError =
+      !result.state.data.summary ||
+      Object.keys(result.state.data.files || {}).length === 0;
 
-    const sandboxUrl = await step.run("get-sandbox-url", async ()=> {
+    const sandboxUrl = await step.run("get-sandbox-url", async () => {
       const sandbox = await getSandbox(sandBoxId);
       const host = sandbox.getHost(3000);
-      return `https://${host}`
+      return `https://${host}`;
     });
 
-    await step.run("save-result", async ()=>{
-      if(isError){
+    await step.run("save-result", async () => {
+      if (isError) {
         return await prisma.message.create({
-          data:{
+          data: {
             projectId: event.data.projectId,
             content: "Something went wrong. Please try again later.",
             role: "ASSISTANT",
             type: "ERROR",
-
-          }
-        })
+          },
+        });
       }
       return await prisma.message.create({
         data: {
@@ -192,20 +199,17 @@ export const developer = inngest.createFunction(
               sandboxUrl: sandboxUrl,
               title: "Fragment",
               files: result.state.data.files,
-            }
-          }
-          
-        }
-      })
-    })
+            },
+          },
+        },
+      });
+    });
 
     return {
       url: sandboxUrl,
       title: "Fragment",
       files: result.state.data.files,
       summary: result.state.data.summary,
-    }
-  }
+    };
+  },
 );
-
-
