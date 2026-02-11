@@ -1,17 +1,17 @@
 # This is a config for E2B sandbox template.
-# You can use template ID (k8by2v1ckdwogsec5ynz) or template name (codeflux-nextjs-test-3) to create a sandbox:
+# You can use template ID (ln4krh2uci7woo397tp4) or template name (codeflux-nextjs-test-2-modified) to create a sandbox:
 
 # Python SDK
 # from e2b import Sandbox, AsyncSandbox
-# sandbox = Sandbox.create("codeflux-nextjs-test-3") # Sync sandbox
-# sandbox = await AsyncSandbox.create("codeflux-nextjs-test-3") # Async sandbox
+# sandbox = Sandbox.create("codeflux-nextjs-test-2-modified") # Sync sandbox
+# sandbox = await AsyncSandbox.create("codeflux-nextjs-test-2-modified") # Async sandbox
 
 # JS SDK
 # import { Sandbox } from 'e2b'
-# const sandbox = await Sandbox.create('codeflux-nextjs-test-3')
+# const sandbox = await Sandbox.create('codeflux-nextjs-test-2-modified')
 
 team_id = "f4ad7afc-48cf-4789-bfd2-131f7d7fb0e7"
-start_cmd = "compile_page.sh"
+start_cmd = "/compile_page.sh"
 dockerfile = "e2b.Dockerfile"
-template_name = "codeflux-nextjs-test-3"
-template_id = "k8by2v1ckdwogsec5ynz"
+template_name = "codeflux-nextjs-test-2-modified"
+template_id = "ln4krh2uci7woo397tp4"

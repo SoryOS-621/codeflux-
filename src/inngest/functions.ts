@@ -61,7 +61,7 @@ export const developer = inngest.createFunction(
   { event: "app/developerEvent" },
   async ({ event, step }) => {
     const sandBoxId = await step.run("get-sandbox-id", async () => {
-      const sandbox = await Sandbox.create("dhruvb2028/codeflux-nextjs-test-3");
+      const sandbox = await Sandbox.create("codeflux-nextjs-test-2-modified");
       return sandbox.sandboxId;
     });
 
@@ -199,7 +199,7 @@ export const developer = inngest.createFunction(
     const network = createNetwork<AgentState>({
       name: "coding-agent-network",
       agents: [codeAgent],
-      maxIter: 10,
+      maxIter: 30,
       router: async ({ network }) => {
         const summary = network.state.data.summary;
 
