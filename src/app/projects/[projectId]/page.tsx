@@ -1,16 +1,27 @@
-interface props {
-    params: Promise<{
-        projectId:string
-    }>
+import { ProjectLayout } from "./_components/project-layout";
+import { createTRPCContext } from "@/trpc/init";
+import { createCallerFactory } from "@/trpc/init";
+import { appRouter } from "@/trpc/routers/_app";
+
+interface ProjectPageProps {
+  params: Promise<{
+    projectId: string;
+  }>;
 }
 
-const Page = async ({params}: props) => {
-    const {projectId} = await params;
-    return (
-        <div>
-            ProjectId : {projectId}
-        </div>
-    )
-}
+export default async function ProjectPage({ params }: ProjectPageProps) {
+  const { projectId } = await params;
 
-export default Page;
+  // Server-side fetch for initial project name (avoids flash)
+  let projectName = projectId;
+  try {
+    const ctx = await createTRPCContext();
+    const caller = createCallerFactory(appRouter)(ctx);
+    const project = await caller.projects.getOne({ id: projectId });
+    projectName = project.name;
+  } catch {
+    // Fallback to ID if project not found; the client will handle errors
+  }
+
+  return <ProjectLayout projectId={projectId} initialProjectName={projectName} />;
+}

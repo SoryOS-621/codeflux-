@@ -10,10 +10,29 @@ export const projectsRouter = createTRPCRouter({
             const projects = await prisma.project.findMany({
                 orderBy:{
                     updatedAt: "desc"
+                },
+                include: {
+                    _count: {
+                        select: { messages: true }
+                    }
                 }
             });
 
             return projects;
+        }),
+
+    getOne: baseProcedure
+        .input(
+            z.object({
+                id: z.string().min(1, { message: "Project ID is required." }),
+            })
+        )
+        .query(async ({ input }) => {
+            const project = await prisma.project.findUniqueOrThrow({
+                where: { id: input.id },
+            });
+
+            return project;
         }),
 
     create: baseProcedure
