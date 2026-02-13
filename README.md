@@ -1,498 +1,485 @@
 # CodeFlux
 
-A modern, full-stack web application built with Next.js 15, tRPC, Prisma, and PostgreSQL. This project features a type-safe API layer, server-side rendering, and a comprehensive UI component library built with Radix UI and Tailwind CSS.
+**An AI-powered code generation platform** that lets you describe what you want to build in plain English, and an AI agent writes the full code for you inside a live cloud sandbox — you can see it running in real-time.
+
+> Think of it as: *"Describe a website → AI builds it → Preview it instantly."*
+
+---
 
 ## 📋 Table of Contents
 
-- [Overview](#overview)
+- [What Does CodeFlux Do?](#what-does-codeflux-do)
+- [How It Works (The Big Picture)](#how-it-works-the-big-picture)
 - [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Features](#features)
+- [Project Structure (Explained)](#project-structure-explained)
+- [Database Schema](#database-schema)
+- [API Endpoints](#api-endpoints)
 - [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Environment Setup](#environment-setup)
-- [Database Setup](#database-setup)
-- [Running the Application](#running-the-application)
-- [Development Guide](#development-guide)
-- [API Documentation](#api-documentation)
-- [UI Components](#ui-components)
+- [Installation (Step by Step)](#installation-step-by-step)
+- [Environment Variables](#environment-variables)
+- [Running the App](#running-the-app)
+- [Architecture Deep Dive](#architecture-deep-dive)
+- [OpenRouter & AI Models](#openrouter--ai-models)
+- [E2B Sandbox](#e2b-sandbox)
 - [Scripts](#scripts)
-- [Deployment](#deployment)
 - [Contributing](#contributing)
 
-## 🌟 Overview
+---
 
-CodeFlux is a production-ready Next.js application that demonstrates modern web development practices. It combines the power of server-side rendering with a fully type-safe API layer using tRPC, ensuring end-to-end type safety from database to frontend.
+## 🤔 What Does CodeFlux Do?
+
+1. **You type a prompt** — e.g. *"Build me a todo app with dark mode"*
+2. **An AI agent gets to work** — it plans, writes code, installs packages, and creates files
+3. **Everything happens in a cloud sandbox** — a real Next.js dev server running in the cloud (via [E2B](https://e2b.dev))
+4. **You see the result** — a live preview URL of the app the AI just built
+
+**In simple terms:** You describe → AI codes → You preview. No setup, no boilerplate.
+
+---
+
+## 🔄 How It Works (The Big Picture)
+
+Here's the flow from the moment you type a prompt to seeing a result:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        YOUR BROWSER                             │
+│                                                                 │
+│  1. You type: "Build a weather dashboard"                       │
+│  2. Click "Start Creating"                                      │
+│                                                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     NEXT.JS SERVER (tRPC)                       │
+│                                                                 │
+│  3. Creates a new Project in PostgreSQL                         │
+│  4. Saves your prompt as a Message                              │
+│  5. Fires an event to Inngest: "app/developerEvent"             │
+│                                                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     INNGEST (Background Jobs)                   │
+│                                                                 │
+│  6. Spins up a cloud sandbox (E2B) with Next.js pre-installed   │
+│  7. Creates an AI agent (via OpenRouter free models)             │
+│  8. The agent loops up to 30 times, using tools:                │
+│       • terminal  → run shell commands (npm install, ls, etc.)  │
+│       • createOrUpdateFiles → write code files                  │
+│       • readFiles → read existing files                         │
+│  9. Agent writes a <task_summary> when done                     │
+│                                                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   DATABASE (PostgreSQL + Prisma)                 │
+│                                                                 │
+│  10. Saves the AI's response as a Message                       │
+│  11. Saves the generated code as a Fragment                     │
+│       (contains: sandbox URL, file contents, title)             │
+│                                                                 │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     LIVE PREVIEW                                │
+│                                                                 │
+│  12. You get a URL to the running sandbox                       │
+│  13. The app the AI built is live and interactive!              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
 
 ## 🚀 Tech Stack
 
-### Core Framework
-- **Next.js 15.5.7** - React framework with App Router
-- **React 19** - UI library with Server Components
-- **TypeScript 5** - Type-safe JavaScript
+| Layer | Technology | What It Does |
+|-------|-----------|-------------|
+| **Frontend** | Next.js 15 + React 19 | The web UI you interact with |
+| **Styling** | Tailwind CSS + Shadcn/UI (Radix) | Beautiful, accessible components |
+| **API Layer** | tRPC | Type-safe communication between frontend and backend (no REST needed) |
+| **Database** | PostgreSQL + Prisma ORM | Stores projects, messages, and generated code |
+| **Background Jobs** | Inngest | Runs the AI agent in the background (so the UI doesn't freeze) |
+| **AI** | OpenRouter (free models) | The brain — generates code based on your prompts |
+| **Cloud Sandbox** | E2B | A real Next.js environment in the cloud where the AI writes and runs code |
+| **Language** | TypeScript | Everything is type-safe, from database to UI |
 
-### Backend & API
-- **tRPC 11.9.0** - End-to-end type-safe APIs
-- **Prisma 7.3.0** - Next-generation ORM
-- **PostgreSQL** - Primary database
-- **Zod 4.3.6** - Schema validation
-- **SuperJSON 2.2.6** - JSON serialization
+---
 
-### UI & Styling
-- **Tailwind CSS 4.1.18** - Utility-first CSS framework
-- **Radix UI** - Unstyled, accessible components
-- **Lucide React** - Icon library
-- **next-themes** - Dark mode support
-- **Recharts** - Chart library
-- **Sonner** - Toast notifications
+## 📁 Project Structure (Explained)
 
-### State Management & Data Fetching
-- **TanStack Query 5.90.20** - Powerful data synchronization
-- **React Hook Form 7.68.0** - Form management
-
-### Development Tools
-- **Turbopack** - Fast bundler
-- **ESLint** - Code linting
-- **tsx** - TypeScript executor
-
-## 📁 Project Structure
+Every folder and file has a purpose. Here's what each one does:
 
 ```
 codeflux/
-├── prisma/                      # Database configuration
-│   ├── schema.prisma           # Prisma schema definition
-│   └── seed.ts                 # Database seeding script
+│
+├── prisma/                          # 🗄️ DATABASE
+│   ├── schema.prisma               #    Defines tables: Project, Message, Fragment
+│   ├── seed.ts                     #    Script to populate the DB with sample data
+│   └── migrations/                 #    Auto-generated SQL migration history
+│
+├── sandbox-templates/               # 📦 E2B SANDBOX TEMPLATE
+│   └── nextjs/
+│       ├── e2b.Dockerfile          #    Docker image for the cloud sandbox
+│       ├── e2b.toml                #    Sandbox config (template name/ID)
+│       └── compile_page.sh         #    Starts the Next.js dev server inside the sandbox
 │
 ├── src/
-│   ├── app/                    # Next.js App Router
-│   │   ├── api/
-│   │   │   └── trpc/          # tRPC API endpoints
-│   │   │       └── [trpc]/
-│   │   │           └── route.ts
-│   │   ├── client.tsx         # Client component
-│   │   ├── layout.tsx         # Root layout
-│   │   ├── page.tsx           # Home page
-│   │   └── globals.css        # Global styles
+│   ├── prompt.ts                   # 🧠 THE AI'S SYSTEM PROMPT
+│   │                               #    Tells the AI how to behave, what tools it has,
+│   │                               #    what rules to follow (e.g. use Tailwind, no CSS files)
+│   │
+│   ├── app/                        # 📄 PAGES (Next.js App Router)
+│   │   ├── layout.tsx              #    Root layout — wraps everything, loads fonts & tRPC
+│   │   ├── page.tsx                #    Home page — input box + "Start Creating" button
+│   │   ├── globals.css             #    Global Tailwind styles
+│   │   ├── projects/
+│   │   │   └── [projectId]/
+│   │   │       └── page.tsx        #    Project detail page — shows results for a project
+│   │   └── api/
+│   │       ├── trpc/
+│   │       │   └── [trpc]/         #    tRPC HTTP handler — all API requests go through here
+│   │       └── inngest/
+│   │           └── route.ts        #    Inngest webhook — receives background job events
+│   │
+│   ├── modules/                    # 📦 FEATURE MODULES (business logic)
+│   │   ├── projects/
+│   │   │   └── server/
+│   │   │       └── procedures.ts   #    API: create project, list projects
+│   │   └── messages/
+│   │       └── server/
+│   │           └── procedures.ts   #    API: create message, list messages
+│   │
+│   ├── inngest/                    # ⚡ BACKGROUND AI AGENT
+│   │   ├── client.ts              #    Inngest client setup
+│   │   ├── functions.ts           #    THE MAIN AI AGENT — creates sandbox, runs AI loop
+│   │   └── utils.ts               #    Helpers: connect to sandbox, parse AI messages
+│   │
+│   ├── trpc/                       # 🔌 API LAYER SETUP
+│   │   ├── init.ts                #    Creates tRPC instance with SuperJSON
+│   │   ├── client.tsx             #    Client-side tRPC provider (React context)
+│   │   ├── server.tsx             #    Server-side tRPC caller
+│   │   ├── query-client.ts        #    TanStack Query configuration
+│   │   └── routers/
+│   │       └── _app.ts            #    Main router — combines all module routers
 │   │
 │   ├── components/
-│   │   └── ui/                # Reusable UI components
-│   │       ├── button.tsx
-│   │       ├── card.tsx
-│   │       ├── dialog.tsx
-│   │       ├── form.tsx
-│   │       └── ... (40+ components)
+│   │   └── ui/                    # 🎨 40+ SHADCN/UI COMPONENTS
+│   │       ├── button.tsx         #    Buttons, cards, dialogs, forms, tables, etc.
+│   │       ├── card.tsx           #    All pre-built, accessible, and customizable
+│   │       └── ...                #    (See components.json for Shadcn config)
 │   │
 │   ├── generated/
-│   │   └── client/            # Prisma generated client
+│   │   └── client/                # 🤖 AUTO-GENERATED PRISMA CLIENT
+│   │                              #    Don't edit these — they're generated from schema.prisma
 │   │
-│   ├── hooks/                 # Custom React hooks
-│   │   └── use-mobile.ts
+│   ├── hooks/
+│   │   └── use-mobile.ts         # 📱 Custom hook to detect mobile screens
 │   │
-│   ├── lib/
-│   │   └── utils.ts           # Utility functions
-│   │
-│   └── trpc/                  # tRPC configuration
-│       ├── client.tsx         # Client-side tRPC setup
-│       ├── server.tsx         # Server-side tRPC setup
-│       ├── init.ts            # tRPC initialization
-│       ├── query-client.ts    # TanStack Query config
-│       └── routers/
-│           └── _app.ts        # Main tRPC router
+│   └── lib/
+│       ├── prisma.ts             # 🗄️ Prisma client singleton
+│       └── utils.ts              # 🔧 Utility: cn() for merging Tailwind classes
 │
-├── lib/
-│   └── prisma.ts              # Prisma client singleton
+├── utils/
+│   └── trpc.ts                   # tRPC utility exports
 │
-├── components.json             # shadcn/ui configuration
-├── next.config.ts             # Next.js configuration
-├── tailwind.config.ts         # Tailwind configuration
-├── tsconfig.json              # TypeScript configuration
-└── package.json               # Dependencies and scripts
+├── package.json                   # Dependencies & scripts
+├── tsconfig.json                  # TypeScript config
+├── next.config.ts                 # Next.js config
+├── prisma.config.ts               # Prisma config
+├── eslint.config.mjs              # ESLint rules
+├── postcss.config.mjs             # PostCSS (used by Tailwind)
+├── components.json                # Shadcn/UI configuration
+└── OPENROUTER_SETUP.md            # Guide for setting up AI models
 ```
 
-## ✨ Features
+---
 
-### Current Implementation
-- ✅ **Full-stack Type Safety** - End-to-end type safety with tRPC
-- ✅ **Server-Side Rendering** - Optimized SSR with Next.js 15
-- ✅ **Database Integration** - PostgreSQL with Prisma ORM
-- ✅ **UI Component Library** - 40+ accessible Radix UI components
-- ✅ **Dark Mode Support** - Theme switching with next-themes
-- ✅ **Form Management** - React Hook Form with Zod validation
-- ✅ **Data Prefetching** - Optimized with TanStack Query
-- ✅ **Responsive Design** - Mobile-first approach
+## 🗄️ Database Schema
 
-### Database Models
-- **User Model**: User management with email and name
-- **Post Model**: Content creation with author relationships
+The app uses **3 tables** in PostgreSQL, managed by Prisma:
 
-## 📦 Prerequisites
+```
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│   Project    │       │   Message    │       │   Fragment   │
+├──────────────┤       ├──────────────┤       ├──────────────┤
+│ id (uuid)    │◄──┐   │ id (uuid)    │◄──┐   │ id (uuid)    │
+│ name         │   │   │ content      │   │   │ messageId    │──► Message
+│ createdAt    │   └───│ projectId    │   └───│ sandboxUrl   │
+│ updatedAt    │       │ role (enum)  │       │ title        │
+└──────────────┘       │ type (enum)  │       │ files (json) │
+                       │ createdAt    │       │ createdAt    │
+                       │ updatedAt    │       │ updatedAt    │
+                       └──────────────┘       └──────────────┘
+```
 
-Before you begin, ensure you have the following installed:
+| Table | Purpose |
+|-------|---------|
+| **Project** | A workspace — each prompt you submit creates a new project |
+| **Message** | Chat history — your prompts (`USER`) and AI responses (`ASSISTANT`) |
+| **Fragment** | The generated code — stores the sandbox URL and all file contents as JSON |
 
-- **Node.js** (v18 or higher)
-- **npm**, **yarn**, **pnpm**, or **bun**
-- **PostgreSQL** (v13 or higher)
-- **Git**
+**Enums:**
+- `MessageRole`: `USER` or `ASSISTANT`
+- `MessageType`: `RESULT` (success) or `ERROR` (something went wrong)
 
-## 🔧 Installation
+---
 
-1. **Clone the repository:**
+## 🔌 API Endpoints
+
+All APIs are type-safe via **tRPC** (no REST URLs to memorize). Here's what's available:
+
+### Projects Router (`trpc.projects.*`)
+
+| Endpoint | Type | What It Does |
+|----------|------|-------------|
+| `projects.getMany` | Query | Get all projects, newest first |
+| `projects.create` | Mutation | Create a project from a prompt. Saves the prompt as a message, then fires the AI agent via Inngest |
+
+### Messages Router (`trpc.messages.*`)
+
+| Endpoint | Type | What It Does |
+|----------|------|-------------|
+| `messages.getMany` | Query | Get all messages, newest first |
+| `messages.create` | Mutation | Send a follow-up message to a project, triggers the AI agent again |
+
+---
+
+## 📋 Prerequisites
+
+Before you start, make sure you have:
+
+| Requirement | Why You Need It |
+|-------------|----------------|
+| **Node.js** v18+ | Runs the app |
+| **PostgreSQL** v13+ | Stores your data |
+| **OpenRouter API Key** | Gives the AI agent a brain (free tier available) |
+| **E2B API Key** | Creates cloud sandboxes where the AI writes code |
+| **Inngest Dev Server** | Runs background jobs locally |
+
+---
+
+## 🔧 Installation (Step by Step)
+
+### 1. Clone the repo
+
 ```bash
 git clone <repository-url>
 cd codeflux
 ```
 
-2. **Install dependencies:**
+### 2. Install dependencies
+
 ```bash
 npm install
-# or
-yarn install
-# or
-pnpm install
-# or
-bun install
 ```
 
-## 🌍 Environment Setup
+### 3. Generate the Prisma client
 
-Create a `.env` file in the root directory:
-
-```env
-# Database Configuration
-DATABASE_URL="postgresql://username:password@localhost:5432/codeflux?schema=public"
-
-# Optional: Prisma Adapter for PostgreSQL
-# If using connection pooling (e.g., PgBouncer)
-DATABASE_URL_UNPOOLED="postgresql://username:password@localhost:5432/codeflux?schema=public"
-```
-
-### Database URL Format
-```
-postgresql://[user]:[password]@[host]:[port]/[database]?schema=[schema]
-```
-
-**Example:**
-```env
-DATABASE_URL="postgresql://postgres:mypassword@localhost:5432/codeflux?schema=public"
-```
-
-## 🗄️ Database Setup
-
-### 1. Generate Prisma Client
 ```bash
 npx prisma generate
 ```
 
-This generates the type-safe Prisma Client in `src/generated/client/`.
+### 4. Set up your database
 
-### 2. Run Database Migrations
 ```bash
-npx prisma migrate dev --name init
+npx prisma migrate dev
 ```
 
-This creates the database tables based on your Prisma schema.
+This creates the `Project`, `Message`, and `Fragment` tables in your PostgreSQL database.
 
-### 3. (Optional) Seed the Database
-```bash
-npx prisma db seed
+---
+
+## 🌍 Environment Variables
+
+Create a `.env` file in the root directory with these values:
+
+```env
+# === DATABASE ===
+# Your PostgreSQL connection string
+DATABASE_URL="postgresql://username:password@localhost:5432/codeflux"
+
+# === AI (OpenRouter) ===
+# Get a free key at: https://openrouter.ai/keys
+OPENROUTER_API_KEY="sk-or-v1-xxxxxxxxxxxxx"
+
+# === CLOUD SANDBOX (E2B) ===
+# Get a key at: https://e2b.dev
+E2B_API_KEY="e2b_xxxxxxxxxxxxx"
+
+# === APP URL ===
+# Used by tRPC for server-side requests
+NEXT_PUBLIC_APP_URL="http://localhost:3000"
 ```
 
-### 4. Open Prisma Studio (Database GUI)
-```bash
-npx prisma studio
-```
+### Where to get each key:
 
-Access the database GUI at `http://localhost:5555`
+| Variable | Where to Get It | Cost |
+|----------|----------------|------|
+| `DATABASE_URL` | Install PostgreSQL locally, or use [Neon](https://neon.tech) / [Supabase](https://supabase.com) | Free tier available |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) | Free models available |
+| `E2B_API_KEY` | [e2b.dev](https://e2b.dev) | Free tier available |
 
-## 🚀 Running the Application
+---
 
-### Development Mode
+## 🚀 Running the App
+
+You need **two terminals** running at the same time:
+
+### Terminal 1 — Next.js dev server
+
 ```bash
 npm run dev
 ```
 
-The application will start at [http://localhost:3000](http://localhost:3000)
+Opens at [http://localhost:3000](http://localhost:3000)
 
-**Features in Development Mode:**
-- Hot module replacement
-- Fast refresh
-- Turbopack bundler
-- Real-time error overlay
+### Terminal 2 — Inngest dev server
 
-### Production Build
 ```bash
-npm run build
-npm run start
+npx inngest-cli@latest dev
 ```
 
-### Linting
-```bash
-npm run lint
-```
+Opens the Inngest dashboard at [http://localhost:8288](http://localhost:8288) — you can see background jobs running here.
 
-## 💻 Development Guide
+### What happens when you use the app:
 
-### Adding a New tRPC Procedure
-
-1. **Define the procedure in `src/trpc/routers/_app.ts`:**
-```typescript
-export const appRouter = createTRPCRouter({
-  // Existing procedures...
-  
-  getUserById: baseProcedure
-    .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      const user = await prisma.user.findUnique({
-        where: { id: input.id },
-      });
-      return user;
-    }),
-});
-```
-
-2. **Use it in your components:**
-```typescript
-// Server Component
-const user = await trpc.getUserById({ id: 1 });
-
-// Client Component
-const { data: user } = trpc.getUserById.useQuery({ id: 1 });
-```
-
-### Creating a New Database Model
-
-1. **Update `prisma/schema.prisma`:**
-```prisma
-model Product {
-  id          Int      @id @default(autoincrement())
-  name        String
-  description String?
-  price       Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-```
-
-2. **Generate and migrate:**
-```bash
-npx prisma migrate dev --name add_product_model
-npx prisma generate
-```
-
-### Adding UI Components
-
-This project uses a custom component library based on Radix UI and Tailwind CSS. All components are located in `src/components/ui/`.
-
-**Example Usage:**
-```tsx
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-
-export function MyComponent() {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Hello World</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Button>Click me</Button>
-      </CardContent>
-    </Card>
-  );
-}
-```
-
-## 📚 API Documentation
-
-### tRPC Router Structure
-
-The main router is defined in `src/trpc/routers/_app.ts` and exported as `AppRouter` type.
-
-#### Current Endpoints
-
-**`hello` Query**
-- **Type:** Query
-- **Input:** `{ text: string }`
-- **Output:** `{ greeting: string }`
-- **Example:**
-```typescript
-const result = await trpc.hello.query({ text: "World" });
-// Returns: { greeting: "hello World" }
-```
-
-### Client-Side Usage
-
-```tsx
-"use client";
-
-import { trpc } from "@/trpc/client";
-
-export function MyComponent() {
-  const { data, isLoading, error } = trpc.hello.useQuery({ text: "World" });
-  
-  if (isLoading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error.message}</div>;
-  
-  return <div>{data.greeting}</div>;
-}
-```
-
-### Server-Side Usage
-
-```tsx
-import { trpc } from "@/trpc/server";
-
-export default async function Page() {
-  const data = await trpc.hello({ text: "World" });
-  return <div>{data.greeting}</div>;
-}
-```
-
-## 🎨 UI Components
-
-The project includes 40+ pre-built, accessible UI components:
-
-### Layout Components
-- `Card`, `Separator`, `Sidebar`, `ScrollArea`, `Resizable`
-
-### Form Components
-- `Input`, `Textarea`, `Select`, `Checkbox`, `Radio`, `Switch`, `Slider`
-- `Form`, `Field`, `Label`, `InputOTP`, `InputGroup`
-
-### Feedback Components
-- `Alert`, `AlertDialog`, `Dialog`, `Sheet`, `Drawer`, `Sonner`
-- `Progress`, `Spinner`, `Skeleton`, `Toast`
-
-### Navigation Components
-- `Button`, `ButtonGroup`, `Tabs`, `Breadcrumb`, `Pagination`
-- `NavigationMenu`, `Menubar`, `DropdownMenu`, `ContextMenu`
-
-### Data Display
-- `Table`, `Badge`, `Avatar`, `EmptyState`, `Tooltip`, `HoverCard`
-- `Accordion`, `Collapsible`, `Chart`, `Calendar`
-
-### Advanced Components
-- `Command`, `Popover`, `Carousel`, `AspectRatio`, `Toggle`, `Kbd`
-
-All components support:
-- ✅ Dark mode
-- ✅ Full accessibility (ARIA)
-- ✅ Keyboard navigation
-- ✅ Custom styling via className
-- ✅ TypeScript types
-
-## 📜 Scripts
-
-| Script | Description |
-|--------|-------------|
-| `npm run dev` | Start development server with Turbopack |
-| `npm run build` | Build for production |
-| `npm run start` | Start production server |
-| `npm run lint` | Run ESLint |
-| `npx prisma generate` | Generate Prisma Client |
-| `npx prisma migrate dev` | Create and apply migrations |
-| `npx prisma studio` | Open Prisma Studio GUI |
-| `npx prisma db push` | Push schema changes without migration |
-| `npx prisma db seed` | Seed the database |
-
-## 🚢 Deployment
-
-### Vercel (Recommended)
-
-1. **Push your code to GitHub**
-2. **Import to Vercel:**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your repository
-   - Configure environment variables
-   - Deploy
-
-3. **Environment Variables:**
-   - Add `DATABASE_URL` in Vercel dashboard
-   - Consider using Vercel Postgres or external PostgreSQL service
-
-### Other Platforms
-
-This Next.js app can be deployed to:
-- **Netlify**
-- **Railway**
-- **Render**
-- **AWS Amplify**
-- **Google Cloud Run**
-- **Docker** (self-hosted)
-
-### Docker Deployment
-
-Create a `Dockerfile`:
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npx prisma generate
-RUN npm run build
-
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-Build and run:
-```bash
-docker build -t codeflux .
-docker run -p 3000:3000 -e DATABASE_URL="postgresql://..." codeflux
-```
-
-## 🔒 Best Practices
-
-### Type Safety
-- Always use TypeScript for new files
-- Define Zod schemas for all inputs
-- Use Prisma types for database operations
-
-### Performance
-- Use Server Components by default
-- Add `"use client"` only when needed
-- Implement data prefetching with TanStack Query
-- Optimize images with `next/image`
-
-### Database
-- Always use migrations for schema changes
-- Never modify the generated Prisma Client
-- Use transactions for related operations
-- Index frequently queried fields
-
-### Security
-- Validate all inputs with Zod
-- Never expose sensitive data in client components
-- Use environment variables for secrets
-- Implement proper error handling
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Commit your changes: `git commit -m 'Add amazing feature'`
-4. Push to the branch: `git push origin feature/amazing-feature`
-5. Open a Pull Request
-
-## 📝 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🔗 Resources
-
-- [Next.js Documentation](https://nextjs.org/docs)
-- [tRPC Documentation](https://trpc.io/docs)
-- [Prisma Documentation](https://www.prisma.io/docs)
-- [Radix UI Documentation](https://www.radix-ui.com/docs/primitives/overview/introduction)
-- [Tailwind CSS Documentation](https://tailwindcss.com/docs)
-- [TanStack Query Documentation](https://tanstack.com/query/latest)
-
-## 💬 Support
-
-For issues, questions, or contributions, please open an issue in the GitHub repository.
+1. Go to `http://localhost:3000`
+2. Type a description like *"Build a habit tracker app"*
+3. Click **"Start Creating"**
+4. A project is created, the AI agent starts working in the background
+5. Check the Inngest dashboard to watch the agent's progress
+6. When done, a live preview URL appears with your generated app
 
 ---
 
-**Built with ❤️ using Next.js, tRPC, and Prisma**
+## 🏗️ Architecture Deep Dive
+
+### The AI Agent (the core of CodeFlux)
+
+The agent lives in `src/inngest/functions.ts`. Here's what it does step by step:
+
+```
+1. Creates an E2B sandbox (a cloud VM with Next.js pre-installed)
+2. Creates an AI agent with 3 tools:
+   ├── terminal      → Run shell commands (npm install, ls, etc.)
+   ├── createOrUpdateFiles → Write/edit code files
+   └── readFiles     → Read existing files
+3. Runs the agent in a loop (up to 30 iterations)
+4. Agent reads the project structure, plans, writes code, installs packages
+5. When done, agent outputs a <task_summary>
+6. Result is saved to the database (Message + Fragment)
+7. Sandbox URL is returned for live preview
+```
+
+### How tRPC works in this project
+
+tRPC gives you **type-safe API calls** without writing REST endpoints:
+
+```
+Frontend (React)                    Backend (Server)
+─────────────────                   ────────────────
+trpc.projects.create.mutate(...)  → projectsRouter.create → Prisma → DB
+trpc.messages.getMany.useQuery()  → messagesRouter.getMany → Prisma → DB
+```
+
+No `fetch()`, no URL strings, no manual types. Everything is auto-completed by TypeScript.
+
+### How Inngest works in this project
+
+Inngest handles **background jobs** so the UI doesn't freeze while the AI works:
+
+```
+User clicks "Start Creating"
+  → tRPC mutation saves to DB
+  → inngest.send({ name: "app/developerEvent", data: {...} })
+  → Inngest picks it up and runs the `developer` function
+  → AI agent works for 30–120 seconds
+  → Result saved to DB
+```
+
+The Inngest endpoint lives at `/api/inngest/route.ts`.
+
+---
+
+## 🤖 OpenRouter & AI Models
+
+CodeFlux uses **OpenRouter** to access AI models (including free ones). The current model is:
+
+```
+openai/gpt-oss-120b:free
+```
+
+You can switch to any model listed in [OPENROUTER_SETUP.md](OPENROUTER_SETUP.md). To change the model, edit the `model` field in `src/inngest/functions.ts`:
+
+```typescript
+model: openai({
+  model: "google/gemma-2-9b-it:free",  // ← Change this
+  apiKey: process.env.OPENROUTER_API_KEY!,
+  baseUrl: "https://openrouter.ai/api/v1",
+}),
+```
+
+---
+
+## 📦 E2B Sandbox
+
+The sandbox is a **real cloud environment** where the AI writes and executes code. It comes pre-configured with:
+
+- Node.js 21
+- Next.js 15.3.3
+- All Shadcn/UI components
+- Tailwind CSS
+- A running dev server on port 3000
+
+The sandbox template is defined in `sandbox-templates/nextjs/`. The AI can read, write, and run commands inside it — like a remote VS Code terminal.
+
+---
+
+## 📜 Scripts
+
+| Command | What It Does |
+|---------|-------------|
+| `npm run dev` | Start Next.js with Turbopack (fast HMR) |
+| `npm run build` | Build for production |
+| `npm run start` | Start the production server |
+| `npm run lint` | Check code for issues |
+| `npx prisma generate` | Regenerate the Prisma client after schema changes |
+| `npx prisma migrate dev` | Apply database migrations |
+| `npx prisma studio` | Open a visual database browser at `localhost:5555` |
+| `npx inngest-cli@latest dev` | Start the Inngest background job server |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo
+2. Create a branch: `git checkout -b feature/my-feature`
+3. Make your changes
+4. Commit: `git commit -m "Add my feature"`
+5. Push: `git push origin feature/my-feature`
+6. Open a Pull Request
+
+---
+
+## 🔗 Resources
+
+| Resource | Link |
+|----------|------|
+| Next.js | [nextjs.org/docs](https://nextjs.org/docs) |
+| tRPC | [trpc.io/docs](https://trpc.io/docs) |
+| Prisma | [prisma.io/docs](https://www.prisma.io/docs) |
+| Inngest | [inngest.com/docs](https://www.inngest.com/docs) |
+| E2B | [e2b.dev/docs](https://e2b.dev/docs) |
+| OpenRouter | [openrouter.ai/docs](https://openrouter.ai/docs) |
+| Shadcn/UI | [ui.shadcn.com](https://ui.shadcn.com) |
+| Tailwind CSS | [tailwindcss.com/docs](https://tailwindcss.com/docs) |
+
+---
+
+**Built with Next.js, tRPC, Prisma, Inngest, E2B, and OpenRouter**
