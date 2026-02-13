@@ -23,15 +23,26 @@ datasource db {
 }
 
 // -----------------------------------------------------------------------------
+// Project Status — Tracks whether the AI agent is currently running
+// -----------------------------------------------------------------------------
+enum ProjectStatus {
+  IDLE       // No agent run in progress
+  GENERATING // An agent run is actively executing
+}
+
+// -----------------------------------------------------------------------------
 // Project — A workspace for code generation
 // -----------------------------------------------------------------------------
 // Each prompt submission creates a new Project. A project accumulates Messages
 // (user prompts + AI responses) over its lifetime.
 model Project {
-  id        String   @id @default(uuid())
-  name      String   // Auto-generated slug (e.g. "clever-fox")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String        @id @default(uuid())
+  name       String        // Auto-generated slug (e.g. "clever-fox")
+  status     ProjectStatus @default(IDLE)  // Whether an agent run is in progress
+  sandboxId  String?       // Currently active E2B sandbox ID (null when idle)
+  sandboxUrl String?       // Live preview URL of the active/last sandbox
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
 
   messages Message[] // All messages in this project's chat history
 }

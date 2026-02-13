@@ -9,6 +9,14 @@
 * 🟢 You can import this file directly.
 */
 
+export const ProjectStatus = {
+  IDLE: 'IDLE',
+  GENERATING: 'GENERATING'
+} as const
+
+export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus]
+
+
 export const MessageRole = {
   USER: 'USER',
   ASSISTANT: 'ASSISTANT'
