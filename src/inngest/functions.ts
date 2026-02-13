@@ -7,6 +7,50 @@ import { getSandbox, lastAssistantTextMessageContent } from './utils';
 import { PROMPT } from '@/prompt';
 import prisma from '@/lib/prisma';
 
+/**
+ * Forcefully rewrites directory-listing commands so that node_modules
+ * is excluded at the shell level — the directory is never even traversed.
+ */
+function sanitizeCommand(raw: string): string {
+  // Split on pipes to handle each segment independently
+  const segments = raw.split('|');
+  const rewritten = segments.map((seg) => {
+    const trimmed = seg.trim();
+
+    // ls — use --ignore flag so node_modules is never listed
+    if (/^ls\b/.test(trimmed)) {
+      // Avoid duplicate --ignore if already present
+      if (!trimmed.includes('--ignore') || !trimmed.includes('node_modules')) {
+        return ` ${trimmed} --ignore='node_modules'`;
+      }
+    }
+
+    // find — use -prune so the directory is never descended into
+    if (/^find\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      // Extract the find path (second token) and the rest of the arguments
+      const tokens = trimmed.split(/\s+/);
+      const findCmd = tokens[0]; // "find"
+      const findPath = tokens[1] || '.'; // path argument
+      const rest = tokens.slice(2).join(' ');
+      return ` ${findCmd} ${findPath} -name 'node_modules' -prune -o ${rest || '-print'} ${rest ? '' : ''}`.replace(/\s+$/, '');
+    }
+
+    // tree — use -I so node_modules is never traversed
+    if (/^tree\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      return ` ${trimmed} -I 'node_modules'`;
+    }
+
+    // du — use --exclude so node_modules is skipped entirely
+    if (/^du\b/.test(trimmed) && !trimmed.includes('node_modules')) {
+      return ` ${trimmed} --exclude='node_modules'`;
+    }
+
+    return seg;
+  });
+
+  return rewritten.join('|');
+}
+
 interface AgentState {
   summary: string;
   files: { [path: string]: string };
@@ -17,7 +61,7 @@ export const developer = inngest.createFunction(
   { event: "app/developerEvent" },
   async ({ event, step }) => {
     const sandBoxId = await step.run("get-sandbox-id", async () => {
-      const sandbox = await Sandbox.create("dhruvb2028/codeflux-nextjs-test-3");
+      const sandbox = await Sandbox.create("codeflux-nextjs-test-2-modified");
       return sandbox.sandboxId;
     });
 
@@ -47,9 +91,12 @@ export const developer = inngest.createFunction(
             return await step?.run("terminal", async ()=>{
               const buffers = { stdout: "", stderr: ""}
 
+              // Forcefully exclude node_modules from ls, find, tree, and similar directory listing commands
+              const sanitizedCommand = sanitizeCommand(command);
+
               try {
                 const sandbox = await getSandbox(sandBoxId);
-                const result = await sandbox.commands.run(command, {
+                const result = await sandbox.commands.run(sanitizedCommand, {
                   onStdout: (data: string) => {
                     buffers.stdout += data;
                   },
@@ -152,7 +199,7 @@ export const developer = inngest.createFunction(
     const network = createNetwork<AgentState>({
       name: "coding-agent-network",
       agents: [codeAgent],
-      maxIter: 10,
+      maxIter: 30,
       router: async ({ network }) => {
         const summary = network.state.data.summary;
 
@@ -164,8 +211,38 @@ export const developer = inngest.createFunction(
 
     // Run the agent with an input.  This automatically uses steps
     // to call your AI model.
-    const result = await network.run(event.data.value);
-    // const {output} = await codeAgent.run(`Write the code snippets for following task: ${event.data.value}`);
+    let result;
+    try {
+      result = await network.run(event.data.value);
+    } catch (e) {
+      const errStr = String(e);
+      console.error("[CodeFlux] Upstream AI error (not a CodeFlux bug):", errStr.slice(0, 300));
+
+      let userMessage: string;
+      if (errStr.includes("Failed to parse JSON") || errStr.includes("Expected ','")) {
+        userMessage = "⚠️ AI model returned broken JSON. Free model likely crashed mid-response. Retry or switch model.";
+      } else if (errStr.includes("401") || errStr.includes("403") || errStr.includes("Unauthorized")) {
+        userMessage = "⚠️ API key rejected. Check OPENROUTER_API_KEY in .env (no trailing spaces).";
+      } else if (errStr.includes("429") || errStr.includes("rate limit")) {
+        userMessage = "⚠️ Rate limited. Wait a minute and retry.";
+      } else if (errStr.includes("502") || errStr.includes("503") || errStr.includes("timeout")) {
+        userMessage = "⚠️ AI provider down/timed out. Retry later or switch model.";
+      } else {
+        userMessage = `⚠️ Upstream AI error: ${errStr.slice(0, 150)}`;
+      }
+
+      await step.run("save-error", async () => {
+        return await prisma.message.create({
+          data: {
+            projectId: event.data.projectId,
+            content: userMessage,
+            role: "ASSISTANT",
+            type: "ERROR",
+          },
+        });
+      });
+      return { error: userMessage };
+    }
 
     const isError =
       !result.state.data.summary ||
@@ -179,10 +256,18 @@ export const developer = inngest.createFunction(
 
     await step.run("save-result", async () => {
       if (isError) {
+        const hasSummary = !!result.state.data.summary;
+        const hasFiles = Object.keys(result.state.data.files || {}).length > 0;
+        const detail = !hasSummary && !hasFiles
+          ? "No summary and no files were generated."
+          : !hasSummary
+          ? "Files were created but the model never produced a <task_summary>."
+          : "Summary exists but no files were written to the sandbox.";
+
         return await prisma.message.create({
           data: {
             projectId: event.data.projectId,
-            content: "Something went wrong. Please try again later.",
+            content: `⚠️ Agent ran ${network.state.results.length} iteration(s) but result is incomplete. ${detail} This usually means the model ran out of tokens, got stuck in a loop, or the prompt was too complex. Try a shorter/simpler prompt or switch to a stronger model.`,
             role: "ASSISTANT",
             type: "ERROR",
           },
