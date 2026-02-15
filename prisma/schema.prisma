@@ -1,8 +1,17 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// =============================================================================
+// CodeFlux — Prisma Schema
+// =============================================================================
+//
+// This file defines the database tables, relationships, and enums.
+// Run `npx prisma migrate dev` after any change to generate a migration.
+// Run `npx prisma generate` to regenerate the TypeScript client.
+//
+// Tables:
+//   Project  — A workspace created when a user submits a prompt
+//   Message  — Chat entries (user prompts and AI responses)
+//   Fragment — The generated code artifact attached to an AI response
+//
+// =============================================================================
 
 generator client {
   provider = "prisma-client"
@@ -13,48 +22,82 @@ datasource db {
   provider = "postgresql"
 }
 
-model Project{
-  id String @id @default(uuid())
-  name String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  messages Message[]
+// -----------------------------------------------------------------------------
+// Project Status — Tracks whether the AI agent is currently running
+// -----------------------------------------------------------------------------
+enum ProjectStatus {
+  IDLE       // No agent run in progress
+  GENERATING // An agent run is actively executing
 }
 
+// -----------------------------------------------------------------------------
+// Project — A workspace for code generation
+// -----------------------------------------------------------------------------
+// Each prompt submission creates a new Project. A project accumulates Messages
+// (user prompts + AI responses) over its lifetime.
+model Project {
+  id         String        @id @default(uuid())
+  name       String        // Auto-generated slug (e.g. "clever-fox")
+  status     ProjectStatus @default(IDLE)  // Whether an agent run is in progress
+  sandboxId  String?       // Currently active E2B sandbox ID (null when idle)
+  sandboxUrl String?       // Live preview URL of the active/last sandbox
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  messages Message[] // All messages in this project's chat history
+}
+
+// -----------------------------------------------------------------------------
+// Enums for Message classification
+// -----------------------------------------------------------------------------
+
+/// Who sent the message — the user or the AI assistant.
 enum MessageRole {
   USER
   ASSISTANT
 }
 
+/// Whether the message represents a successful result or an error.
 enum MessageType {
-  RESULT
-  ERROR
+  RESULT // Normal message (user prompt or successful AI response)
+  ERROR  // AI error (rate limit, broken JSON, timeout, etc.)
 }
 
-model Message{
-  id String @id @default(uuid())
-  content String
-  role MessageRole
-  type MessageType
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+// -----------------------------------------------------------------------------
+// Message — A single chat entry in a project
+// -----------------------------------------------------------------------------
+// USER messages contain the prompt text.
+// ASSISTANT messages contain the AI's response (summary text).
+// If the AI also generated code, the message has an attached Fragment.
+model Message {
+  id        String      @id @default(uuid())
+  content   String      // The message text (prompt or AI summary)
+  role      MessageRole // USER or ASSISTANT
+  type      MessageType // RESULT or ERROR
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
-  projectId String
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String      // FK → Project
+  project   Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  fragment Fragment?
+  fragment  Fragment?   // Optional: attached code fragment (only on ASSISTANT RESULT messages)
 }
 
-model Fragment{
-  id String @id @default(uuid())
-  messageId String @unique
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+// -----------------------------------------------------------------------------
+// Fragment — Generated code attached to an AI response
+// -----------------------------------------------------------------------------
+// Contains the live sandbox URL and a JSON map of all files the AI created.
+// One-to-one with Message (each AI response can have at most one fragment).
+model Fragment {
+  id         String  @id @default(uuid())
+  messageId  String  @unique           // FK → Message (1:1)
+  message    Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
-  sandboxUrl String
-  title String
-  files Json
+  sandboxUrl String  // Live preview URL of the E2B sandbox (e.g. https://xxxxx.e2b.dev)
+  title      String  // Display title (e.g. "Fragment")
+  files      Json    // Map of { "app/page.tsx": "file contents...", ... }
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
