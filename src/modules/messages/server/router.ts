@@ -46,6 +46,15 @@ export const messagesRouter = createTRPCRouter({
   }),
 
   /**
+   * Get all messages for a specific project, ordered chronologically.
+   */
+  getByProject: baseProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(async ({ input }) => {
+      return await databaseProvider.getMessagesByProjectId(input.projectId);
+    }),
+
+  /**
    * Send a follow-up message to an existing project and trigger the AI agent.
    *
    * @param input.prompt    - The follow-up prompt text.

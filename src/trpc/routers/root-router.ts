@@ -23,6 +23,7 @@ import { projectsRouter } from "@/modules/projects/server/router";
 import { createTRPCRouter } from "../init";
 import { messagesRouter } from "@/modules/messages/server/router";
 import { templatesRouter } from "@/modules/templates/server/router";
+import { agentsRouter } from "@/modules/agents/server/router";
 
 export const appRouter = createTRPCRouter({
   /** Project CRUD — create projects, list all projects */
@@ -33,6 +34,9 @@ export const appRouter = createTRPCRouter({
 
   /** Template listing — preconfigured project templates */
   templates: templatesRouter,
+
+  /** Agent operations — status, history, cleanup */
+  agents: agentsRouter,
 });
 
 /** The full type of the tRPC API — used for client-side type inference. */

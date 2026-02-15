@@ -277,7 +277,7 @@ export function createDeveloperAgentFunction(
         });
 
         const builder = new BuildAgent();
-        let buildResult = await builder.execute(
+        const buildResult = await builder.execute(
           { command: BUILD_COMMAND },
           context,
         );

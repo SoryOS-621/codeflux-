@@ -12,7 +12,6 @@ import type {
   Message,
   MessageRole,
   MessageType,
-  ProjectStatus,
 } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -78,6 +77,29 @@ export interface DatabaseProvider {
    * @returns The project, or null if not found.
    */
   getProjectById(id: string): Promise<Project | null>;
+
+  /**
+   * Get a single project by ID with all messages and their fragments.
+   * Used by the project workspace page.
+   */
+  getProjectWithMessages(
+    id: string,
+  ): Promise<
+    | (Project & {
+        messages: (Message & { fragment?: { id: string; sandboxUrl: string; title: string; files: Record<string, string> } | null })[];
+      })
+    | null
+  >;
+
+  /**
+   * Delete a project and all associated messages/fragments.
+   */
+  deleteProject(id: string): Promise<void>;
+
+  /**
+   * Rename a project.
+   */
+  renameProject(id: string, name: string): Promise<Project>;
 
   // -- Messages -------------------------------------------------------------
 

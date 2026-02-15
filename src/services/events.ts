@@ -10,7 +10,8 @@
  * This interface lives in services/ and defines the transport contract.
  */
 
-import type { AgentEvent } from "@/core/events/types";
+// AgentEvent type is referenced conceptually in this interface's contract.
+// See @/core/events/types for the full type definition.
 
 /**
  * Contract that every event streaming transport must satisfy.

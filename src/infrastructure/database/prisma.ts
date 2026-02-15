@@ -87,6 +87,68 @@ export class PrismaDatabaseProvider implements DatabaseProvider {
     };
   }
 
+  async getProjectWithMessages(id: string) {
+    const project = await prisma.project.findUnique({
+      where: { id },
+      include: {
+        messages: {
+          orderBy: { createdAt: "asc" },
+          include: { fragment: true },
+        },
+      },
+    });
+
+    if (!project) return null;
+
+    return {
+      id: project.id,
+      name: project.name,
+      status: project.status as Project["status"],
+      sandboxId: project.sandboxId,
+      sandboxUrl: project.sandboxUrl,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      messages: project.messages.map((m) => ({
+        id: m.id,
+        content: m.content,
+        role: m.role as Message["role"],
+        type: m.type as Message["type"],
+        projectId: m.projectId,
+        createdAt: m.createdAt,
+        updatedAt: m.updatedAt,
+        fragment: m.fragment
+          ? {
+              id: m.fragment.id,
+              sandboxUrl: m.fragment.sandboxUrl,
+              title: m.fragment.title,
+              files: m.fragment.files as Record<string, string>,
+            }
+          : null,
+      })),
+    };
+  }
+
+  async deleteProject(id: string): Promise<void> {
+    await prisma.project.delete({ where: { id } });
+  }
+
+  async renameProject(id: string, name: string): Promise<Project> {
+    const project = await prisma.project.update({
+      where: { id },
+      data: { name },
+    });
+
+    return {
+      id: project.id,
+      name: project.name,
+      status: project.status as Project["status"],
+      sandboxId: project.sandboxId,
+      sandboxUrl: project.sandboxUrl,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    };
+  }
+
   // -- Messages -------------------------------------------------------------
 
   async createMessage(input: CreateMessageInput): Promise<Message> {

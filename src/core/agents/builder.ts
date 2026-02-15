@@ -18,7 +18,7 @@ import type { AgentContext, BuilderInput, BuilderOutput } from "./types";
 const DEFAULT_BUILD_COMMAND = "npx tsc --noEmit 2>&1";
 
 /** Maximum time to wait for the build command (ms). */
-const BUILD_TIMEOUT_MS = 120_000; // 2 minutes
+const _BUILD_TIMEOUT_MS = 120_000; // 2 minutes
 
 export class BuildAgent extends BaseAgent<BuilderInput, BuilderOutput> {
   readonly name = "BuildAgent";

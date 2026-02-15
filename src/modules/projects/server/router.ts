@@ -45,6 +45,44 @@ export const projectsRouter = createTRPCRouter({
   }),
 
   /**
+   * Get a single project by ID with all messages and fragments.
+   * Used on the project workspace page.
+   */
+  getOne: baseProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(async ({ input }) => {
+      const project = await databaseProvider.getProjectWithMessages(input.projectId);
+      if (!project) {
+        throw new Error("Project not found");
+      }
+      return project;
+    }),
+
+  /**
+   * Delete a project and all associated data.
+   */
+  delete: baseProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      await databaseProvider.deleteProject(input.projectId);
+      return { deleted: true };
+    }),
+
+  /**
+   * Rename a project.
+   */
+  rename: baseProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        name: z.string().min(1).max(100),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      return await databaseProvider.renameProject(input.projectId, input.name);
+    }),
+
+  /**
    * Create a new project and kick off AI code generation.
    *
    * @param input.prompt - The user's description of what to build.

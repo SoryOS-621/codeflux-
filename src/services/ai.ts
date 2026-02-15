@@ -9,7 +9,6 @@
 
 import type {
   CodeAgentState,
-  GenerateProjectInput,
 } from "@/types";
 
 // ---------------------------------------------------------------------------

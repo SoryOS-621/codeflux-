@@ -5,6 +5,8 @@
  * Responsibilities:
  * - Loads Google Fonts (Geist Sans + Geist Mono)
  * - Wraps the app in the tRPC + TanStack Query provider
+ * - Provides light/dark/system theming via next-themes
+ * - Shows toast notifications via Sonner
  * - Sets global metadata (page title, description)
  *
  * This is a Server Component — do NOT add "use client" here.
@@ -14,6 +16,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TRPCReactProvider } from "@/trpc/client";
+import { ThemeProvider } from "@/components/theme/theme-provider";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -37,11 +41,14 @@ export default function RootLayout({
 }>) {
   return (
     <TRPCReactProvider>
-      <html lang="en">
+      <html lang="en" suppressHydrationWarning>
         <body
           className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         >
-          {children}
+          <ThemeProvider>
+            {children}
+            <Toaster richColors position="bottom-right" />
+          </ThemeProvider>
         </body>
       </html>
     </TRPCReactProvider>

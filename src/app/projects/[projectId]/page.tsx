@@ -1,11 +1,12 @@
 /**
  * @file page.tsx  (Project detail page — route: `/projects/[projectId]`)
- * @description Displays the details and AI-generated results for a specific project.
+ * @description The main workspace page for a project.
  *
- * This is a Server Component that extracts the `projectId` from the URL
- * params and will eventually render the chat history, live sandbox preview,
- * and generated code fragments.
+ * This is a Server Component that extracts `projectId` from the URL params
+ * and renders the client-side Workspace component which orchestrates all panels.
  */
+
+import { Workspace } from "./_components/workspace";
 
 /** Props for the project detail page (Next.js App Router dynamic route). */
 interface ProjectDetailPageProps {
@@ -17,11 +18,7 @@ interface ProjectDetailPageProps {
 const ProjectDetailPage = async ({ params }: ProjectDetailPageProps) => {
   const { projectId } = await params;
 
-  return (
-    <div>
-      ProjectId : {projectId}
-    </div>
-  );
+  return <Workspace projectId={projectId} />;
 };
 
 export default ProjectDetailPage;
