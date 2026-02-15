@@ -31,6 +31,8 @@ const createProjectInput = z.object({
     .string()
     .min(1, { message: "Prompt is required." })
     .max(10000, { message: "Prompt is too long." }),
+  /** Optional template ID to seed the project with pre-built files. */
+  templateId: z.string().optional(),
 });
 
 export const projectsRouter = createTRPCRouter({
@@ -67,6 +69,7 @@ export const projectsRouter = createTRPCRouter({
         data: {
           prompt: input.prompt,
           projectId: createdProject.id,
+          ...(input.templateId ? { templateId: input.templateId } : {}),
         },
       });
 

@@ -137,6 +137,8 @@ export interface GenerateProjectInput {
   prompt: string;
   /** The project ID this generation belongs to. */
   projectId: string;
+  /** Optional template ID to seed the sandbox with pre-built files. */
+  templateId?: string;
 }
 
 /** The result returned after a successful code generation. */

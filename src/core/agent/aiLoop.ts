@@ -1,32 +1,32 @@
 /**
- * @file core/agent/aiLoop.ts
- * @description The core AI agent loop — pure orchestration logic.
- *
- * This module contains ALL the business logic for running the AI developer
- * agent. It is completely decoupled from any specific provider:
- * - No Inngest imports
- * - No E2B imports
- * - No OpenRouter imports
- * - No Prisma imports
- *
- * All external systems are accessed through the `AgentDependencies` interface,
- * which is injected at call time from the infrastructure layer.
+@file core/agent/aiLoop.ts
+@description The core AI agent loop — pure orchestration logic.
+
+This module contains ALL the business logic for running the AI developer
+agent. It is completely decoupled from any specific provider:
+ - No Inngest imports
+ - No E2B imports
+ - No OpenRouter imports
+ - No Prisma imports
+
+  All external systems are accessed through the `AgentDependencies` interface,
+  which is injected at call time from the infrastructure layer.
  */
 
 import type { AgentDependencies, CodeAgentState } from "./types";
 import { sanitizeShellCommand } from "./helpers";
 
 /**
- * Build the tool definitions that the AI agent will use.
- *
- * Each tool delegates to the injected sandbox provider — the core layer
- * never knows whether it's talking to E2B, Docker, or a mock.
- *
- * @param sandboxId - The active sandbox ID.
- * @param deps      - Injected dependencies.
- * @param state     - Mutable shared state across iterations.
- * @returns Array of tool definitions for the AI provider.
- */
+ Build the tool definitions that the AI agent will use.
+
+ Each tool delegates to the injected sandbox provider — the core layer
+ never knows whether it's talking to E2B, Docker, or a mock.
+
+ @param sandboxId - The active sandbox ID.
+ @param deps      - Injected dependencies.
+ @param state     - Mutable shared state across iterations.
+ @returns Array of tool definitions for the AI provider.
+**/
 export function buildAgentTools(
   sandboxId: string,
   deps: AgentDependencies,
@@ -126,12 +126,12 @@ export function buildAgentTools(
   ];
 }
 
-/**
- * Check whether the agent's response contains a `<task_summary>` block,
- * indicating that it considers the task complete.
- *
- * @param content - The assistant's text response.
- * @returns The full content if it contains a summary, or empty string.
+/** 
+  Check whether the agent's response contains a `<task_summary>` block,
+  indicating that it considers the task complete.
+ 
+  @param content - The assistant's text response.
+  @returns The full content if it contains a summary, or empty string.
  */
 export function detectSummary(content: string): string {
   if (content.includes("<task_summary>")) {

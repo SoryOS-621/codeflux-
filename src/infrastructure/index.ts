@@ -37,6 +37,8 @@ import { OpenRouterProvider } from "./ai/openrouter";
 import { InngestQueueProvider } from "./queue/inngest";
 import { E2BSandboxProvider } from "./sandbox/e2b";
 import { PrismaDatabaseProvider } from "./database/prisma";
+import { EventBus } from "@/core/events/event-bus";
+import { SSEEventStreamProvider } from "./events/sse";
 
 // ---------------------------------------------------------------------------
 // Provider Singletons
@@ -54,6 +56,12 @@ export const sandboxProvider = new E2BSandboxProvider();
 /** The active database provider. */
 export const databaseProvider = new PrismaDatabaseProvider();
 
+/** The shared event bus — agents emit into this, transports read from it. */
+export const eventBus = new EventBus();
+
+/** The SSE event stream provider — creates SSE streams from the event bus. */
+export const eventStreamProvider = new SSEEventStreamProvider(eventBus);
+
 // ---------------------------------------------------------------------------
 // AI Configuration
 // ---------------------------------------------------------------------------
@@ -65,7 +73,8 @@ export const databaseProvider = new PrismaDatabaseProvider();
  * without code changes.
  */
 export const aiConfig: AIModelConfig = {
-  model: process.env.AI_MODEL || "openai/gpt-oss-120b:free",
+  model: process.env.AI_MODEL || "qwen/qwen3-coder:free",
+  // "openai/gpt-oss-120b:free",
   apiKey: process.env.OPENROUTER_API_KEY || "",
   baseUrl: process.env.AI_BASE_URL || "https://openrouter.ai/api/v1",
   temperature: parseFloat(process.env.AI_TEMPERATURE || "0.1"),
@@ -86,6 +95,7 @@ export const developerAgentFunction = createDeveloperAgentFunction(
   aiConfig,
   sandboxProvider,
   databaseProvider,
+  eventBus,
 );
 
 /** Re-export the Inngest client for use in the API route. */

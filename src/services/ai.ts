@@ -79,5 +79,13 @@ export interface AIProvider {
     userPrompt: string,
     tools: AgentTool[],
     maxIterations: number,
+    options?: {
+      /** Distinct name for this agent phase (e.g. "planner", "coder").
+       *  Used as the Inngest step ID prefix so each phase is distinguishable
+       *  in the Inngest Dev Server timeline. Defaults to "code-agent". */
+      agentName?: string;
+      /** Called at the start of each iteration with (currentIteration, maxIterations). */
+      onIteration?: (current: number, max: number) => void;
+    },
   ): Promise<AgentRunResult>;
 }

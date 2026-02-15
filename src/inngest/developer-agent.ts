@@ -172,6 +172,7 @@ export const developerAgentFunction = inngest.createFunction(
               try {
                 const sandbox = await connectToSandbox(sandboxId);
                 const result = await sandbox.commands.run(safeCommand, {
+                  timeoutMs: 300_000, // 5 minutes — prevents premature timeout on long-running commands
                   onStdout: (data: string) => {
                     outputBuffers.stdout += data;
                   },

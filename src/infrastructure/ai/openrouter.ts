@@ -104,7 +104,10 @@ export class OpenRouterProvider implements AIProvider {
       handler: (args: Record<string, unknown>) => Promise<unknown>;
     }>,
     maxIterations: number,
+    options?: { agentName?: string; onIteration?: (current: number, max: number) => void },
   ): Promise<AgentRunResult> {
+    const agentName = options?.agentName || "code-agent";
+    const onIteration = options?.onIteration;
     // Convert our generic tool definitions to Inngest Agent Kit tools.
     // We convert the raw JSON Schema parameter objects into Zod schemas so
     // the model receives a fully typed function signature — preventing it
@@ -169,7 +172,7 @@ export class OpenRouterProvider implements AIProvider {
     );
 
     const codeAgent = createAgent<CodeAgentState>({
-      name: "code-agent",
+      name: agentName,
       description: "An experienced software development engineer.",
       system: systemPrompt,
       model: openai({
@@ -195,11 +198,16 @@ export class OpenRouterProvider implements AIProvider {
     });
 
     const agentNetwork = createNetwork<CodeAgentState>({
-      name: "coding-agent-network",
+      name: `${agentName}-network`,
       agents: [codeAgent],
       maxIter: maxIterations,
       router: async ({ network }) => {
         if (network.state.data.summary) return;
+        // Track iteration progress
+        const currentIter = network.state.results.length + 1;
+        if (onIteration) {
+          onIteration(currentIter, maxIterations);
+        }
         return codeAgent;
       },
     });

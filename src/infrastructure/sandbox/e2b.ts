@@ -33,6 +33,7 @@ export class E2BSandboxProvider implements SandboxProvider {
 
     try {
       const result = await sandbox.commands.run(command, {
+        timeoutMs: 300_000, // 5 minutes — prevents premature timeout on long-running commands
         onStdout: (data: string) => {
           outputBuffers.stdout += data;
         },

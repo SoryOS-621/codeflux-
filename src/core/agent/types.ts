@@ -14,6 +14,8 @@ export type {
   SandboxFile,
 } from "@/types";
 
+import type { EventBus } from "@/core/events/event-bus";
+
 /**
  * Dependencies injected into the core agent logic.
  *
@@ -23,6 +25,22 @@ export type {
  * - Swapping providers without touching business logic
  */
 export interface AgentDependencies {
+  /** Event bus for real-time streaming updates to the UI. */
+  eventBus: EventBus;
+
+  /**
+   * Optional step wrapper for queue-level observability.
+   *
+   * When provided (e.g. by Inngest), each agent phase appears as a named
+   * step in the queue's dev server / dashboard. Defaults to a passthrough
+   * that just executes the callback directly.
+   *
+   * @param name - A short, human-readable step name (e.g. "plan", "generate-code").
+   * @param fn   - The async work to execute inside the step.
+   * @returns The result of `fn`.
+   */
+  runStep: <T>(name: string, fn: () => Promise<T>) => Promise<T>;
+
   /** Creates a new sandbox and returns its ID. */
   createSandbox: (template: string) => Promise<string>;
   /** Checks whether a sandbox is still alive / reachable. */
