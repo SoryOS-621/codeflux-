@@ -70,6 +70,18 @@ export interface SandboxFile {
   content: string;
 }
 
+/** A single log entry from a sandbox. */
+export interface SandboxLogEntry {
+  /** Log level (e.g. "DEBUG", "INFO", "WARN", "ERROR"). */
+  level: string;
+  /** Log message content. */
+  message: string;
+  /** ISO timestamp. */
+  timestamp: string;
+  /** Additional key-value fields. */
+  fields?: Record<string, string>;
+}
+
 // ---------------------------------------------------------------------------
 // Database / Domain Models
 // ---------------------------------------------------------------------------
@@ -125,10 +137,13 @@ export interface Fragment {
  *
  * - `summary`: Set when the agent outputs a `<task_summary>` block.
  * - `files`: Map of relative file paths → file contents for every file written.
+ * - `lastErrors`: Most recent compilation/runtime errors (if any).
  */
 export interface CodeAgentState {
   summary: string;
   files: Record<string, string>;
+  lastErrors: string;
+  devLogsChecked: boolean;
 }
 
 /** Input to start a code generation job. */

@@ -7,8 +7,9 @@
  */
 
 import type { SandboxProvider } from "@/services/sandbox";
-import type { ExecutionResult, SandboxFile } from "@/types";
+import type { ExecutionResult, SandboxFile, SandboxLogEntry } from "@/types";
 import { Sandbox } from "@e2b/code-interpreter";
+import { ConnectionConfig, ApiClient } from "e2b";
 
 /**
  * Sandbox provider backed by E2B cloud sandboxes.
@@ -94,6 +95,83 @@ export class E2BSandboxProvider implements SandboxProvider {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async getLogs(
+    sandboxId: string,
+    opts?: { limit?: number; startMs?: number },
+  ): Promise<SandboxLogEntry[]> {
+    try {
+      const config = new ConnectionConfig();
+      const client = new ApiClient(config);
+
+      // Call the E2B API's /sandboxes/{sandboxID}/logs endpoint directly,
+      // since the SDK doesn't expose a higher-level method for this yet.
+      const res = await (client as unknown as { api: {
+        GET: (
+          path: string,
+          options: Record<string, unknown>,
+        ) => Promise<{
+          data?: {
+            logs?: Array<{
+              level: string;
+              message: string;
+              timestamp: string;
+            }>;
+            logEntries?: Array<{
+              level: string;
+              message: string;
+              timestamp: string;
+              fields?: Record<string, string>;
+            }>;
+          };
+          error?: unknown;
+        }>;
+      } }).api.GET("/sandboxes/{sandboxID}/logs", {
+        params: {
+          path: { sandboxID: sandboxId },
+          query: {
+            ...(opts?.limit && { limit: opts.limit }),
+            ...(opts?.startMs && { start: opts.startMs }),
+          },
+        },
+      });
+
+      if (res.error) {
+        console.log(`[E2B] Failed to fetch logs for sandbox ${sandboxId}:`, res.error);
+        return [];
+      }
+
+      // The API returns both `logs` (plain) and `logEntries` (structured).
+      // Prefer structured logEntries if available.
+      const entries = res.data?.logEntries ?? [];
+      const plainLogs = res.data?.logs ?? [];
+
+      const combined: SandboxLogEntry[] = entries.map((e) => ({
+        level: e.level,
+        message: e.message,
+        timestamp: e.timestamp,
+        fields: e.fields,
+      }));
+
+      // Append plain logs if logEntries were empty
+      if (combined.length === 0 && plainLogs.length > 0) {
+        for (const log of plainLogs) {
+          combined.push({
+            level: log.level,
+            message: log.message,
+            timestamp: log.timestamp,
+          });
+        }
+      }
+
+      return combined;
+    } catch (error) {
+      console.log(
+        `[E2B] getLogs failed for sandbox ${sandboxId}: ${String(error).slice(0, 200)}`,
+      );
+      return [];
     }
   }
 

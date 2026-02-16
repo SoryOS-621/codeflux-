@@ -66,45 +66,16 @@ export function sanitizeShellCommand(rawCommand: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Classifies an upstream AI error into a user-friendly message.
+ * Returns the real error string — no hardcoded classifications.
  *
  * @param error - The raw error (string or Error object).
- * @returns A user-friendly error message.
+ * @returns The actual error message.
  */
 export function classifyAIError(error: unknown): string {
-  const errorString = String(error);
-
-  if (
-    errorString.includes("Failed to parse JSON") ||
-    errorString.includes("Expected ','")
-  ) {
-    return "⚠️ AI model returned broken JSON. Free model likely crashed mid-response. Retry or switch model.";
+  if (error instanceof Error) {
+    return `⚠️ ${error.name}: ${error.message}\n${error.stack ?? ""}`;
   }
-
-  if (
-    errorString.includes("401") ||
-    errorString.includes("403") ||
-    errorString.includes("Unauthorized")
-  ) {
-    return "⚠️ API key rejected. Check OPENROUTER_API_KEY in .env (no trailing spaces).";
-  }
-
-  if (
-    errorString.includes("429") ||
-    errorString.includes("rate limit")
-  ) {
-    return "⚠️ Rate limited. Wait a minute and retry.";
-  }
-
-  if (
-    errorString.includes("502") ||
-    errorString.includes("503") ||
-    errorString.includes("timeout")
-  ) {
-    return "⚠️ AI provider down/timed out. Retry later or switch model.";
-  }
-
-  return `⚠️ Upstream AI error: ${errorString.slice(0, 150)}`;
+  return `⚠️ ${String(error)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +120,6 @@ export function getIncompleteResultMessage(
         : "Summary exists but no files were written to the sandbox.";
 
   return (
-    `⚠️ Agent ran ${iterationCount} iteration(s) but result is incomplete. ` +
-    `${detail} This usually means the model ran out of tokens, got stuck in a loop, ` +
-    `or the prompt was too complex. Try a shorter/simpler prompt or switch to a stronger model.`
+    `⚠️ Agent ran ${iterationCount} iteration(s) but result is incomplete. ${detail}`
   );
 }

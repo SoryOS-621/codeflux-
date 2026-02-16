@@ -95,16 +95,141 @@ function sanitizeShellCommand(rawCommand: string): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Extracts file paths and code contents from markdown-style code blocks
+ * in the agent's text response.
+ *
+ * When a weaker model writes code as plain text instead of calling
+ * createOrUpdateFiles, this function salvages the code so the files can
+ * still be written to the sandbox.
+ *
+ * Recognises patterns like:
+ *   ```tsx
+ *   // app/page.tsx
+ *   export default function Page() { ... }
+ *   ```
+ * Or:
+ *   **app/page.tsx**
+ *   ```tsx
+ *   export default function Page() { ... }
+ *   ```
+ */
+function extractCodeBlocksFromText(text: string): Record<string, string> {
+  const files: Record<string, string> = {};
+
+  // ── Strategy 1: JSON tool-call blocks ─────────────────────────────
+  // Some models write the tool call as a JSON code block instead of
+  // making a real function call. Detect and parse these.
+  // e.g. ```json\n{"type":"function","name":"createOrUpdateFiles","parameters":{"files":[...]}}```
+  const jsonBlockRegex = /```(?:json)?\s*\n([\s\S]*?)```/g;
+  let jsonMatch;
+  while ((jsonMatch = jsonBlockRegex.exec(text)) !== null) {
+    const blockContent = jsonMatch[1].trim();
+    // Only try parsing blocks that look like they contain createOrUpdateFiles
+    if (blockContent.includes("createOrUpdateFiles")) {
+      try {
+        const parsed = JSON.parse(blockContent);
+        // Handle: { "name": "createOrUpdateFiles", "parameters": { "files": [...] } }
+        const filesArray =
+          parsed?.parameters?.files ||
+          parsed?.arguments?.files ||
+          parsed?.files;
+        if (Array.isArray(filesArray)) {
+          for (const f of filesArray) {
+            if (f.path && f.content) {
+              let filePath = f.path.replace(/^\/home\/user\//, "").replace(/^\/+/, "");
+              files[filePath] = f.content;
+            }
+          }
+        }
+      } catch {
+        // Not valid JSON — fall through to Strategy 2
+      }
+    }
+  }
+
+  // If we already found files via JSON parsing, return early
+  if (Object.keys(files).length > 0) return files;
+
+  // ── Strategy 2: Inline JSON in plain text (no code fence) ─────────
+  // Some models write the JSON without code fences at all
+  const inlineJsonRegex = /\{[\s\S]*?"createOrUpdateFiles"[\s\S]*?"files"\s*:\s*\[[\s\S]*?\]\s*\}/g;
+  let inlineMatch;
+  while ((inlineMatch = inlineJsonRegex.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(inlineMatch[0]);
+      const filesArray =
+        parsed?.parameters?.files ||
+        parsed?.arguments?.files ||
+        parsed?.files;
+      if (Array.isArray(filesArray)) {
+        for (const f of filesArray) {
+          if (f.path && f.content) {
+            let filePath = f.path.replace(/^\/home\/user\//, "").replace(/^\/+/, "");
+            files[filePath] = f.content;
+          }
+        }
+      }
+    } catch {
+      // Not valid JSON — continue
+    }
+  }
+
+  if (Object.keys(files).length > 0) return files;
+
+  // ── Strategy 3: Markdown-style code blocks with file paths ────────
+  // e.g. **app/page.tsx**\n```tsx\n...\n```
+  // or   ```tsx\n// app/page.tsx\n...\n```
+  const blockRegex = /(?:(?:\*\*|`)?([a-zA-Z0-9_/.@-]+\.(?:tsx?|jsx?|css|json|md))(?:\*\*|`)?\s*\n)?```(?:tsx?|jsx?|typescript|javascript|json|css|html)?\s*\n([\s\S]*?)```/g;
+
+  let match;
+  while ((match = blockRegex.exec(text)) !== null) {
+    let filePath = match[1]?.trim();
+    let code = match[2];
+
+    if (!code || code.trim().length === 0) continue;
+
+    // If path wasn't before the block, check the first line inside the block
+    // e.g. "// app/page.tsx" or "/* app/components/header.tsx */"
+    if (!filePath) {
+      const firstLine = code.split("\n")[0].trim();
+      const commentPathMatch = firstLine.match(
+        /^(?:\/\/|\/\*|#)\s*([a-zA-Z0-9_/.@-]+\.(?:tsx?|jsx?|css|json|md))/
+      );
+      if (commentPathMatch) {
+        filePath = commentPathMatch[1];
+        // Remove the path comment from the code
+        code = code.split("\n").slice(1).join("\n");
+      }
+    }
+
+    if (!filePath) continue;
+
+    // Normalize path — strip leading / or /home/user/
+    filePath = filePath.replace(/^\/home\/user\//, "").replace(/^\/+/, "");
+
+    files[filePath] = code.trimEnd() + "\n";
+  }
+
+  return files;
+}
+
+// ---------------------------------------------------------------------------
+
+/**
  * Shared state that persists across all iterations of the agent network.
  *
  * - `summary`: Set when the agent outputs a `<task_summary>` block,
  *   signalling that the task is complete.
  * - `files`: A map of relative file paths → file contents for every file
  *   the agent wrote to the sandbox. Saved as a JSON Fragment in the DB.
+ * - `sandboxUrl`: The live preview URL, saved early so it's always available.
+ * - `lastErrors`: Most recent compilation/runtime errors (if any).
  */
 interface CodeAgentState {
   summary: string;
   files: { [filePath: string]: string };
+  sandboxUrl: string;
+  lastErrors: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +261,15 @@ export const developerAgentFunction = inngest.createFunction(
     });
 
     // -----------------------------------------------------------------------
+    // Step 1b: Get sandbox preview URL early so it's always available
+    // -----------------------------------------------------------------------
+    const sandboxPreviewUrl = await step.run("get-sandbox-preview-url", async () => {
+      const sandbox = await connectToSandbox(sandboxId);
+      const host = sandbox.getHost(3000);
+      return `https://${host}`;
+    });
+
+    // -----------------------------------------------------------------------
     // Step 2: Define the AI code agent with its tools
     // -----------------------------------------------------------------------
     const codeAgent = createAgent<CodeAgentState>({
@@ -156,9 +290,9 @@ export const developerAgentFunction = inngest.createFunction(
         createTool({
           name: "terminal",
           description:
-            "Run shell commands for inspection and installs. Always limit output size. " +
-            "Use commands like: ls | head, ls app, find app -maxdepth 2, or tree -L 2. " +
-            "Never run plain ls on large folders like node_modules.",
+            "Execute a shell command in the sandbox. Use for package installs " +
+            "(npm install <pkg> --yes) and file system exploration (ls, find, tree). " +
+            "Returns stdout, stderr, and exitCode so you can see real errors.",
           parameters: z.object({
             command: z.string(),
           }),
@@ -179,14 +313,114 @@ export const developerAgentFunction = inngest.createFunction(
                     outputBuffers.stderr += data;
                   },
                 });
-                return result.stdout;
+
+                // Return both stdout and stderr so agent can see warnings/errors
+                const output: Record<string, string | number> = {
+                  stdout: result.stdout || "",
+                  stderr: outputBuffers.stderr || "",
+                  exitCode: result.exitCode ?? 0,
+                };
+                return JSON.stringify(output);
               } catch (error) {
-                console.log(
-                  `[terminal] Command failed: ${error}\n` +
-                    `stdout: ${outputBuffers.stdout}\n` +
-                    `stderr: ${outputBuffers.stderr}`,
-                );
+                // Return the real error to the agent instead of swallowing it
+                return JSON.stringify({
+                  stdout: outputBuffers.stdout,
+                  stderr: outputBuffers.stderr || String(error),
+                  exitCode: 1,
+                  error: String(error),
+                });
               }
+            });
+          },
+        }),
+
+        // ── Tool: getDevServerLogs ──────────────────────────────────────
+        createTool({
+          name: "getDevServerLogs",
+          description:
+            "Check the Next.js dev server for compilation or runtime errors. " +
+            "Fetches sandbox system logs (ERROR/WARN), checks localhost:3000 for the " +
+            "Next.js error overlay, and runs a TypeScript check to catch type errors. " +
+            "Call this after writing/updating files to verify they compile cleanly.",
+          parameters: z.object({}),
+          handler: async (_, { step, network }: Tool.Options<CodeAgentState>) => {
+            return await step?.run("getDevServerLogs", async () => {
+              const sandbox = await connectToSandbox(sandboxId);
+              const logs: Record<string, string> = {};
+
+              // 1. Fetch E2B sandbox system logs (dev server stdout/stderr)
+              try {
+                const { ConnectionConfig: Cfg, ApiClient: Client } = await import("e2b");
+                const config = new Cfg();
+                const client = new Client(config);
+                const res = await (client as unknown as { api: {
+                  GET: (path: string, options: Record<string, unknown>) => Promise<{
+                    data?: { logEntries?: Array<{ level: string; message: string }> };
+                    error?: unknown;
+                  }>;
+                } }).api.GET("/sandboxes/{sandboxID}/logs", {
+                  params: { path: { sandboxID: sandboxId }, query: { limit: 100 } },
+                });
+                const errorLogs = (res.data?.logEntries ?? []).filter(
+                  (l) => l.level === "ERROR" || l.level === "WARN",
+                );
+                if (errorLogs.length > 0) {
+                  logs.sandboxErrors = errorLogs
+                    .map((l) => `[${l.level}] ${l.message}`)
+                    .join("\n");
+                }
+              } catch (error) {
+                logs.sandboxLogsError = String(error);
+              }
+
+              // 2. Check the page response for Next.js error overlay
+              try {
+                const curlResult = await sandbox.commands.run(
+                  "curl -s -o /tmp/page_check.html -w '%{http_code}' http://localhost:3000 2>&1"
+                );
+                const httpStatus = curlResult.stdout.trim();
+                logs.httpStatus = httpStatus;
+
+                if (httpStatus !== "200") {
+                  try {
+                    const errorPage = await sandbox.commands.run(
+                      "cat /tmp/page_check.html | head -200"
+                    );
+                    logs.errorPageContent = errorPage.stdout;
+                  } catch {
+                    logs.errorPageContent = "Could not read error page";
+                  }
+                }
+              } catch (error) {
+                logs.curlError = String(error);
+              }
+
+              // 3. Check for TypeScript / Next.js compilation errors via tsc
+              try {
+                const tscResult = await sandbox.commands.run(
+                  "cd /home/user && npx tsc --noEmit --pretty 2>&1 | tail -80"
+                );
+                const tscOutput = tscResult.stdout.trim();
+                if (tscOutput) {
+                  logs.typescriptErrors = tscOutput;
+                }
+              } catch (error) {
+                logs.typescriptCheck = String(error);
+              }
+
+              // Store errors in shared state so lifecycle can decide to continue
+              const hasErrors = logs.sandboxErrors ||
+                logs.typescriptErrors ||
+                logs.errorPageContent ||
+                (logs.httpStatus && logs.httpStatus !== "200");
+
+              if (hasErrors && network) {
+                network.state.data.lastErrors = JSON.stringify(logs);
+              } else if (network) {
+                network.state.data.lastErrors = "";
+              }
+
+              return JSON.stringify(logs, null, 2);
             });
           },
         }),
@@ -195,9 +429,8 @@ export const developerAgentFunction = inngest.createFunction(
         createTool({
           name: "createOrUpdateFiles",
           description:
-            "Create or update files in the sandbox. Use this for ALL code and content " +
-            "changes. Each path must be relative. Do NOT use absolute paths. " +
-            "Do NOT paste full files in chat—apply changes through this tool.",
+            "Create or overwrite files in the sandbox. Paths must be relative " +
+            "(e.g. 'app/page.tsx'). Batch multiple files in a single call when possible.",
           parameters: z.object({
             files: z.array(
               z.object({
@@ -225,7 +458,11 @@ export const developerAgentFunction = inngest.createFunction(
 
                   return updatedFiles;
                 } catch (error) {
-                  return "Error: " + error;
+                  // Return real error details so the agent can act on them
+                  const errMsg = error instanceof Error
+                    ? `${error.name}: ${error.message}\n${error.stack ?? ""}`
+                    : String(error);
+                  return `File write failed — ${errMsg}`;
                 }
               },
             );
@@ -241,9 +478,8 @@ export const developerAgentFunction = inngest.createFunction(
         createTool({
           name: "readFiles",
           description:
-            "Read the contents of existing files in the sandbox. Use this ONLY for " +
-            "real files with known paths. Do NOT use on folders. Use terminal (ls, find) " +
-            "to explore directories first.",
+            "Read file contents from the sandbox. Provide absolute paths " +
+            "(e.g. '/home/user/app/page.tsx'). Use terminal to discover paths first.",
           parameters: z.object({
             files: z.array(z.string()),
           }),
@@ -254,13 +490,25 @@ export const developerAgentFunction = inngest.createFunction(
                 const contents = [];
 
                 for (const filePath of files) {
-                  const content = await sandbox.files.read(filePath);
-                  contents.push({ path: filePath, content });
+                  try {
+                    const content = await sandbox.files.read(filePath);
+                    contents.push({ path: filePath, content });
+                  } catch (fileError) {
+                    contents.push({
+                      path: filePath,
+                      content: null,
+                      error: String(fileError),
+                    });
+                  }
                 }
 
                 return JSON.stringify(contents);
               } catch (error) {
-                return "Error: " + error;
+                // Return real error so the agent can see what happened
+                const errMsg = error instanceof Error
+                  ? `${error.name}: ${error.message}`
+                  : String(error);
+                return JSON.stringify({ error: errMsg });
               }
             });
           },
@@ -272,10 +520,73 @@ export const developerAgentFunction = inngest.createFunction(
         onResponse: async ({ result, network }) => {
           const assistantMessage = extractLastAssistantMessage(result);
 
-          // The agent signals completion by including <task_summary> in its reply
           if (assistantMessage && network) {
+            // ── Fallback: extract code/files from text responses ───────
+            // Some models write code as markdown text or embed tool calls
+            // as JSON in their response instead of making real function calls.
+            // Detect this and write the files for them.
+            const hasFiles = Object.keys(network.state.data.files || {}).length > 0;
+            if (!hasFiles && (
+              assistantMessage.includes("```") ||
+              assistantMessage.includes("createOrUpdateFiles")
+            )) {
+              const extracted = extractCodeBlocksFromText(assistantMessage);
+              if (Object.keys(extracted).length > 0) {
+                console.log(
+                  `[CodeFlux] Model wrote code as text instead of using tool. ` +
+                  `Extracting ${Object.keys(extracted).length} file(s) and writing to sandbox.`
+                );
+                try {
+                  const sandbox = await connectToSandbox(sandboxId);
+                  for (const [path, content] of Object.entries(extracted)) {
+                    await sandbox.files.write(path, content);
+                  }
+                  network.state.data.files = {
+                    ...(network.state.data.files || {}),
+                    ...extracted,
+                  };
+                } catch (err) {
+                  console.error("[CodeFlux] Failed to write extracted files:", err);
+                }
+              }
+            }
+
+            // ── Check if the agent wants to finish ────────────────────
             if (assistantMessage.includes("<task_summary>")) {
-              network.state.data.summary = assistantMessage;
+              const filesNow = Object.keys(network.state.data.files || {}).length;
+
+              if (filesNow === 0) {
+                // Agent produced a summary but never wrote any files — reject
+                console.log(
+                  "[CodeFlux] Agent tried to finish without writing any files. Re-iterating."
+                );
+                // Push a correction message so the agent knows what to do
+                result.output.push({
+                  type: "text" as const,
+                  role: "user" as const,
+                  content:
+                    "ERROR: You produced a <task_summary> but did NOT write any files to the sandbox. " +
+                    "Your code was only in plain text. You MUST call the createOrUpdateFiles tool to " +
+                    "actually write the files. Please use createOrUpdateFiles now with all the code you intended to write, " +
+                    "then call getDevServerLogs to verify, then produce <task_summary> again.",
+                });
+                // Don't set summary — agent will re-iterate
+              } else if (network.state.data.lastErrors) {
+                console.log(
+                  "[CodeFlux] Agent tried to finish but there are outstanding errors. " +
+                  "Clearing summary so agent can fix them."
+                );
+                result.output.push({
+                  type: "text" as const,
+                  role: "user" as const,
+                  content:
+                    "ERROR: There are still compilation errors. Fix them before producing <task_summary>. " +
+                    "Errors: " + network.state.data.lastErrors,
+                });
+                // Don't set summary — agent will re-iterate
+              } else {
+                network.state.data.summary = assistantMessage;
+              }
             }
           }
 
@@ -298,60 +609,49 @@ export const developerAgentFunction = inngest.createFunction(
       },
     });
 
+    // Save the sandbox URL early so the UI can show the preview link immediately
+    await step.run("save-sandbox-url-early", async () => {
+      return await prisma.message.create({
+        data: {
+          projectId: event.data.projectId,
+          content: `Sandbox started. Preview: ${sandboxPreviewUrl}`,
+          role: "ASSISTANT",
+          type: "RESULT",
+        },
+      });
+    });
+
     // Execute the agent network with the user's prompt
     let agentResult;
     try {
       agentResult = await agentNetwork.run(event.data.prompt);
     } catch (error) {
-      // ── Handle upstream AI errors gracefully ──────────────────────────
-      const errorString = String(error);
-      console.error(
-        "[CodeFlux] Upstream AI error (not a CodeFlux bug):",
-        errorString.slice(0, 300),
-      );
+      // ── Show the REAL error — no hardcoded messages ──────────────────
+      const errorString = error instanceof Error
+        ? `${error.name}: ${error.message}\n${error.stack ?? ""}`
+        : String(error);
 
-      let userFacingMessage: string;
-      if (
-        errorString.includes("Failed to parse JSON") ||
-        errorString.includes("Expected ','")
-      ) {
-        userFacingMessage =
-          "⚠️ AI model returned broken JSON. Free model likely crashed mid-response. Retry or switch model.";
-      } else if (
-        errorString.includes("401") ||
-        errorString.includes("403") ||
-        errorString.includes("Unauthorized")
-      ) {
-        userFacingMessage =
-          "⚠️ API key rejected. Check OPENROUTER_API_KEY in .env (no trailing spaces).";
-      } else if (
-        errorString.includes("429") ||
-        errorString.includes("rate limit")
-      ) {
-        userFacingMessage = "⚠️ Rate limited. Wait a minute and retry.";
-      } else if (
-        errorString.includes("502") ||
-        errorString.includes("503") ||
-        errorString.includes("timeout")
-      ) {
-        userFacingMessage =
-          "⚠️ AI provider down/timed out. Retry later or switch model.";
-      } else {
-        userFacingMessage = `⚠️ Upstream AI error: ${errorString.slice(0, 150)}`;
-      }
+      console.error("[CodeFlux] Agent error:", errorString);
 
       await step.run("save-ai-error-message", async () => {
         return await prisma.message.create({
           data: {
             projectId: event.data.projectId,
-            content: userFacingMessage,
+            content: `⚠️ Agent error:\n\n${errorString}`,
             role: "ASSISTANT",
             type: "ERROR",
+            fragment: {
+              create: {
+                sandboxUrl: sandboxPreviewUrl,
+                title: "Fragment (error)",
+                files: agentNetwork.state?.data?.files || {},
+              },
+            },
           },
         });
       });
 
-      return { error: userFacingMessage };
+      return { error: errorString, url: sandboxPreviewUrl };
     }
 
     // -----------------------------------------------------------------------
@@ -361,19 +661,13 @@ export const developerAgentFunction = inngest.createFunction(
       !agentResult.state.data.summary ||
       Object.keys(agentResult.state.data.files || {}).length === 0;
 
-    // Get the live preview URL of the sandbox's dev server
-    const sandboxPreviewUrl = await step.run("get-sandbox-preview-url", async () => {
-      const sandbox = await connectToSandbox(sandboxId);
-      const host = sandbox.getHost(3000);
-      return `https://${host}`;
-    });
-
     // Save the final result (success or incomplete) to the database
     await step.run("save-agent-result", async () => {
       if (isIncompleteResult) {
         const hasSummary = !!agentResult.state.data.summary;
         const hasFiles =
           Object.keys(agentResult.state.data.files || {}).length > 0;
+        const lastErrors = agentResult.state.data.lastErrors || "";
 
         const detail =
           !hasSummary && !hasFiles
@@ -382,15 +676,25 @@ export const developerAgentFunction = inngest.createFunction(
               ? "Files were created but the model never produced a <task_summary>."
               : "Summary exists but no files were written to the sandbox.";
 
+        const errorContext = lastErrors
+          ? `\n\nLast known errors:\n${lastErrors}`
+          : "";
+
         return await prisma.message.create({
           data: {
             projectId: event.data.projectId,
             content:
               `⚠️ Agent ran ${agentNetwork.state.results.length} iteration(s) but result is incomplete. ` +
-              `${detail} This usually means the model ran out of tokens, got stuck in a loop, ` +
-              `or the prompt was too complex. Try a shorter/simpler prompt or switch to a stronger model.`,
+              `${detail}${errorContext}`,
             role: "ASSISTANT",
             type: "ERROR",
+            fragment: {
+              create: {
+                sandboxUrl: sandboxPreviewUrl,
+                title: "Fragment (incomplete)",
+                files: agentResult.state.data.files || {},
+              },
+            },
           },
         });
       }

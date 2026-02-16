@@ -8,7 +8,7 @@
  */
 
 import type { SandboxProvider } from "@/services/sandbox";
-import type { ExecutionResult, SandboxFile } from "@/types";
+import type { ExecutionResult, SandboxFile, SandboxLogEntry } from "@/types";
 
 /**
  * Sandbox provider backed by self-hosted Docker containers.
@@ -61,5 +61,23 @@ export class DockerSandboxProvider implements SandboxProvider {
     throw new Error(
       "DockerSandboxProvider.getPreviewUrl() not implemented yet",
     );
+  }
+
+  async isAlive(_sandboxId: string): Promise<boolean> {
+    // TODO: Check if Docker container is running
+    throw new Error("DockerSandboxProvider.isAlive() not implemented yet");
+  }
+
+  async getLogs(
+    _sandboxId: string,
+    _opts?: { limit?: number; startMs?: number },
+  ): Promise<SandboxLogEntry[]> {
+    // TODO: docker logs <container>
+    throw new Error("DockerSandboxProvider.getLogs() not implemented yet");
+  }
+
+  async kill(_sandboxId: string): Promise<void> {
+    // TODO: docker kill / docker rm
+    throw new Error("DockerSandboxProvider.kill() not implemented yet");
   }
 }

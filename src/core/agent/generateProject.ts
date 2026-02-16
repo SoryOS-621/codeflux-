@@ -23,11 +23,6 @@ import type {
 import type { AIProvider, AIModelConfig } from "@/services/ai";
 import { buildAgentTools, detectSummary } from "./aiLoop";
 import { AGENT_SYSTEM_PROMPT } from "./system-prompt";
-import {
-  classifyAIError,
-  isIncompleteResult,
-  getIncompleteResultMessage,
-} from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -147,6 +142,21 @@ export async function generateProject(
   await deps.setProjectGenerating(input.projectId, sandboxId);
 
   // -----------------------------------------------------------------------
+  // Step 1c: Get sandbox URL immediately and send it to the user
+  // -----------------------------------------------------------------------
+  const sandboxPreviewUrl = await deps.getSandboxPreviewUrl(
+    sandboxId,
+    PREVIEW_PORT,
+  );
+
+  await deps.saveMessage({
+    projectId: input.projectId,
+    content: `Sandbox started. Preview: ${sandboxPreviewUrl}`,
+    role: "ASSISTANT",
+    type: "RESULT",
+  });
+
+  // -----------------------------------------------------------------------
   // Steps 2-5 are wrapped in try/finally to guarantee release
   // -----------------------------------------------------------------------
   try {
@@ -156,6 +166,8 @@ export async function generateProject(
     const state: CodeAgentState = {
       summary: "",
       files: {},
+      lastErrors: "",
+      devLogsChecked: false,
     };
 
     const tools = buildAgentTools(sandboxId, deps, state);
@@ -181,50 +193,77 @@ export async function generateProject(
         state.files = { ...state.files, ...agentResult.state.files };
       }
     } catch (error) {
-      // ── Handle upstream AI errors gracefully ────────────────────────
-      console.error(
-        "[CodeFlux] Upstream AI error (not a CodeFlux bug):",
-        String(error).slice(0, 300),
-      );
+      // ── Show the REAL error — no hardcoded messages ──────────────
+      const errorString = error instanceof Error
+        ? `${error.name}: ${error.message}\n${error.stack ?? ""}`
+        : String(error);
 
-      const userFacingMessage = classifyAIError(error);
+      console.error("[CodeFlux] Agent error:", errorString);
 
-      await deps.saveMessage({
-        projectId: input.projectId,
-        content: userFacingMessage,
-        role: "ASSISTANT",
-        type: "ERROR",
-      });
+      // Use the sandboxPreviewUrl already fetched in Step 1c
+      if (sandboxPreviewUrl && Object.keys(state.files).length > 0) {
+        await deps.saveMessageWithFragment({
+          projectId: input.projectId,
+          content: `⚠️ Agent error:\n\n${errorString}`,
+          role: "ASSISTANT",
+          type: "ERROR",
+          fragment: {
+            sandboxUrl: sandboxPreviewUrl,
+            title: "Fragment (error)",
+            files: state.files,
+          },
+        });
+      } else {
+        await deps.saveMessage({
+          projectId: input.projectId,
+          content: `⚠️ Agent error:\n\n${errorString}`,
+          role: "ASSISTANT",
+          type: "ERROR",
+        });
+      }
 
-      return { error: userFacingMessage };
+      return { error: errorString };
     }
 
     // ---------------------------------------------------------------------
     // Step 4: Determine success/failure
     // ---------------------------------------------------------------------
-    const incomplete = isIncompleteResult(state.summary, state.files);
+    const hasSummary = !!state.summary;
+    const hasFiles = Object.keys(state.files).length > 0;
+    const incomplete = !hasSummary || !hasFiles;
 
-    // Get the live preview URL
-    const sandboxPreviewUrl = await deps.getSandboxPreviewUrl(
-      sandboxId,
-      PREVIEW_PORT,
-    );
+    // sandboxPreviewUrl already fetched in Step 1c — reuse it
 
     // ---------------------------------------------------------------------
     // Step 5: Persist the result
     // ---------------------------------------------------------------------
     if (incomplete) {
-      const message = getIncompleteResultMessage(
-        state.summary,
-        state.files,
-        agentResult.iterationCount,
-      );
+      const detail =
+        !hasSummary && !hasFiles
+          ? "No summary and no files were generated."
+          : !hasSummary
+            ? "Files were created but the model never produced a <task_summary>."
+            : "Summary exists but no files were written to the sandbox.";
 
-      await deps.saveMessage({
+      const lastErrors = state.lastErrors || agentResult.state.lastErrors || "";
+      const errorContext = lastErrors
+        ? `\n\nLast known errors:\n${lastErrors}`
+        : "";
+
+      const message =
+        `⚠️ Agent ran ${agentResult.iterationCount} iteration(s) but result is incomplete. ` +
+        `${detail}${errorContext}`;
+
+      await deps.saveMessageWithFragment({
         projectId: input.projectId,
         content: message,
         role: "ASSISTANT",
         type: "ERROR",
+        fragment: {
+          sandboxUrl: sandboxPreviewUrl,
+          title: "Fragment (incomplete)",
+          files: state.files,
+        },
       });
 
       return { error: message };

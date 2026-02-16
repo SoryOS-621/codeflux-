@@ -9,6 +9,7 @@
 
 import type { AIProvider, AIModelConfig, AgentRunResult } from "@/services/ai";
 import type { CodeAgentState } from "@/types";
+import { extractCodeBlocksFromText } from "@/core/agent/aiLoop";
 import {
   openai,
   createAgent,
@@ -133,6 +134,11 @@ export class OpenRouterProvider implements AIProvider {
             result = await tool.handler(args as Record<string, unknown>);
           }
 
+          // ── Track getDevServerLogs calls ────────────────────────────
+          if (tool.name === "getDevServerLogs" && network) {
+            network.state.data.devLogsChecked = true;
+          }
+
           // ── Replay-safe file tracking ──────────────────────────────
           // Inngest replays the function from scratch after each step
           // checkpoint. Side-effects inside step.run() (like writing to
@@ -184,11 +190,85 @@ export class OpenRouterProvider implements AIProvider {
       lifecycle: {
         onResponse: async ({ result, network }) => {
           const assistantMessage = extractLastAssistantMessage(result);
+
           if (assistantMessage && network) {
+            // ── Fallback: extract code/files from text responses ───────
+            // Some models write code as markdown text or embed tool calls
+            // as JSON instead of making real function calls.
+            const hasFiles = Object.keys(network.state.data.files || {}).length > 0;
+            if (!hasFiles && (
+              assistantMessage.includes("```") ||
+              assistantMessage.includes("createOrUpdateFiles")
+            )) {
+              const extracted = extractCodeBlocksFromText(assistantMessage);
+              if (Object.keys(extracted).length > 0) {
+                console.log(
+                  `[CodeFlux] Model wrote code as text instead of using tool. ` +
+                  `Extracting ${Object.keys(extracted).length} file(s) and writing to sandbox.`
+                );
+                // Write them via the createOrUpdateFiles tool handler
+                const createTool = tools.find(t => t.name === "createOrUpdateFiles");
+                if (createTool) {
+                  const filesToWrite = Object.entries(extracted).map(([path, content]) => ({ path, content }));
+                  try {
+                    await createTool.handler({ files: filesToWrite });
+                  } catch (err) {
+                    console.error("[CodeFlux] Failed to write extracted files:", err);
+                  }
+                }
+              }
+            }
+
+            // ── Check if the agent wants to finish ────────────────────
             if (assistantMessage.includes("<task_summary>")) {
-              network.state.data.summary = assistantMessage;
+              const filesNow = Object.keys(network.state.data.files || {}).length;
+
+              if (filesNow === 0) {
+                // Agent produced a summary but never wrote any files — reject
+                console.log(
+                  "[CodeFlux] Agent tried to finish without writing any files. Re-iterating."
+                );
+                result.output.push({
+                  type: "text" as const,
+                  role: "user" as const,
+                  content:
+                    "ERROR: You produced a <task_summary> but did NOT write any files to the sandbox. " +
+                    "Your code was only in plain text. You MUST call the createOrUpdateFiles tool to " +
+                    "actually write the files. Please use createOrUpdateFiles now with all the code you intended to write, " +
+                    "then call getDevServerLogs to verify, then produce <task_summary> again.",
+                });
+                // Don't set summary — agent will re-iterate
+              } else if (!network.state.data.devLogsChecked) {
+                console.log(
+                  "[CodeFlux] Agent tried to finish without calling getDevServerLogs. Rejecting."
+                );
+                result.output.push({
+                  type: "text" as const,
+                  role: "user" as const,
+                  content:
+                    "ERROR: You MUST call getDevServerLogs at least once to verify your code compiles " +
+                    "before producing <task_summary>. Call getDevServerLogs now, fix any errors, " +
+                    "then produce <task_summary> again.",
+                });
+              } else if (network.state.data.lastErrors) {
+                console.log(
+                  "[CodeFlux] Agent tried to finish but there are outstanding errors. " +
+                  "Clearing summary so agent can fix them."
+                );
+                result.output.push({
+                  type: "text" as const,
+                  role: "user" as const,
+                  content:
+                    "ERROR: There are still compilation errors. Fix them before producing <task_summary>. " +
+                    "Errors: " + network.state.data.lastErrors,
+                });
+                // Don't set summary — agent will re-iterate
+              } else {
+                network.state.data.summary = assistantMessage;
+              }
             }
           }
+
           return result;
         },
       },
@@ -215,6 +295,8 @@ export class OpenRouterProvider implements AIProvider {
       state: {
         summary: networkResult.state.data.summary || "",
         files: networkResult.state.data.files || {},
+        lastErrors: networkResult.state.data.lastErrors || "",
+        devLogsChecked: networkResult.state.data.devLogsChecked || false,
       },
       iterationCount: networkResult.state.results.length,
     };

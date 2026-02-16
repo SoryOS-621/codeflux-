@@ -122,6 +122,8 @@ export function createDeveloperAgentFunction(
             sandboxProvider.readFiles(id, paths),
           getSandboxPreviewUrl: (id, port) =>
             step.run(s("get-sandbox-url"), () => sandboxProvider.getPreviewUrl(id, port)),
+          getSandboxLogs: (id, opts) =>
+            sandboxProvider.getLogs(id, opts),
           saveMessage: (data) =>
             step.run(s("save-message"), () => databaseProvider.createMessage(data)),
           saveMessageWithFragment: (data) =>

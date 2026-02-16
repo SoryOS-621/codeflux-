@@ -12,6 +12,7 @@ export type {
   GenerateProjectResult,
   ExecutionResult,
   SandboxFile,
+  SandboxLogEntry,
 } from "@/types";
 
 /**
@@ -44,6 +45,11 @@ export interface AgentDependencies {
   ) => Promise<Array<{ path: string; content: string }>>;
   /** Gets the live preview URL. */
   getSandboxPreviewUrl: (sandboxId: string, port: number) => Promise<string>;
+  /** Gets structured logs from the sandbox (system-level process/error logs). */
+  getSandboxLogs: (
+    sandboxId: string,
+    opts?: { limit?: number; startMs?: number },
+  ) => Promise<Array<{ level: string; message: string; timestamp: string; fields?: Record<string, string> }>>;
   /** Saves a message to the database. */
   saveMessage: (data: {
     projectId: string;

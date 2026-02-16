@@ -7,7 +7,7 @@
  * execute commands, and read/write files — never importing a specific SDK.
  */
 
-import type { ExecutionResult, SandboxFile } from "@/types";
+import type { ExecutionResult, SandboxFile, SandboxLogEntry } from "@/types";
 
 /**
  * Contract that every sandbox provider must satisfy.
@@ -78,6 +78,21 @@ export interface SandboxProvider {
    * @param sandboxId - The sandbox to check.
    */
   isAlive(sandboxId: string): Promise<boolean>;
+
+  /**
+   * Get structured logs from a running sandbox.
+   *
+   * Uses the E2B API's `/sandboxes/{sandboxID}/logs` endpoint to fetch
+   * system-level logs (process stdout/stderr, init, errors).
+   *
+   * @param sandboxId - The sandbox to fetch logs for.
+   * @param opts      - Optional: limit (max entries) and startMs (start timestamp in ms).
+   * @returns Array of structured log entries.
+   */
+  getLogs(
+    sandboxId: string,
+    opts?: { limit?: number; startMs?: number },
+  ): Promise<SandboxLogEntry[]>;
 
   /**
    * Kill / shut down a running sandbox, freeing its resources immediately.
