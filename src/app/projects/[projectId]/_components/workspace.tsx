@@ -1,14 +1,22 @@
 /**
  * @file _components/workspace.tsx
- * @description Master workspace component that orchestrates all panels.
+ * @description Master workspace orchestrator — premium 3-column layout.
  *
- * Uses react-resizable-panels for a three-panel layout:
- * - Left: Chat panel (messages + input)
- * - Center: Code viewer (file explorer + syntax-highlighted code)
- * - Right: Live preview (iframe + controls)
+ * Layout (desktop):
+ *   ┌──────────────────────────────────────────────────────┐
+ *   │                  WorkspaceHeader                     │
+ *   ├──────────────────────────────────────────────────────┤
+ *   │                 SandboxStatusBar                     │
+ *   ├──────────┬───────────────┬───────────────────────────┤
+ *   │ Sidebar  │   ChatPanel   │       RightPanel          │
+ *   │ (260px)  │  (resizable)  │  (code/preview/logs/term) │
+ *   │          │               │                           │
+ *   └──────────┴───────────────┴───────────────────────────┘
  *
- * Connects to SSE via useAgentEvents and derives workspace state
- * via useWorkspaceState.
+ * Mobile: Chat by default, slide-over panels.
+ *
+ * Preserves: tRPC data fetching, SSE events, keyboard shortcuts,
+ * phase toasts, file-map derivation from fragments.
  */
 
 "use client";
@@ -22,14 +30,25 @@ import { useTRPC } from "@/trpc/client";
 import { useQuery } from "@tanstack/react-query";
 import { useAgentEvents } from "@/hooks/use-agent-events";
 import { useWorkspaceState } from "@/hooks/use-workspace-state";
-import { useState, useMemo } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import { useSandboxStore } from "@/stores/sandbox-store";
+import { useMemo, useRef, useEffect } from "react";
+import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
 
 import { WorkspaceHeader } from "./workspace-header";
+import { SandboxStatusBar } from "./sandbox-status-bar";
+import { WorkspaceSidebar } from "./sidebar/workspace-sidebar";
 import { ChatPanel } from "./chat/chat-panel";
-import { CodePanel } from "./code/code-panel";
-import { PreviewPanel } from "./preview/preview-panel";
-import { AgentProgressBar } from "./progress/agent-progress-bar";
-import { LoadingSpinner } from "@/components/shared/loading-spinner";
+import { RightPanel } from "./panels/right-panel";
+import { MobileTabBar, type MobileTab } from "./mobile-tab-bar";
+import { WorkspaceSkeleton } from "./workspace-skeleton";
+
+// Mobile panels imported for slide-over
+import { MonacoEditorPanel } from "./editor/monaco-editor-panel";
+import { LogsPanel } from "./panels/logs-panel";
 
 interface WorkspaceProps {
   projectId: string;
@@ -37,9 +56,20 @@ interface WorkspaceProps {
 
 export function Workspace({ projectId }: WorkspaceProps) {
   const trpc = useTRPC();
+  const isMobile = useIsMobile();
 
-  /** Currently selected file path in the code viewer. */
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const { mobilePanel, setMobilePanel } = useWorkspaceStore();
+
+  /** Ref to the chat textarea for Ctrl+K focussing. */
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  /** Global keyboard shortcuts. */
+  useKeyboardShortcuts({
+    onFocusPrompt: () => {
+      if (isMobile) setMobilePanel("chat");
+      setTimeout(() => chatInputRef.current?.focus(), 50);
+    },
+  });
 
   /** Fetch project with all messages and fragments. */
   const projectQuery = useQuery(
@@ -54,19 +84,67 @@ export function Workspace({ projectId }: WorkspaceProps) {
   /** Derive structured workspace state from SSE events. */
   const workspaceState = useWorkspaceState(agentEvents.events);
 
+  /** Feed build logs into the sandbox store so panels can show them. */
+  const addLog = useSandboxStore((s) => s.addLog);
+  const prevLogLenRef = useRef(0);
+  useEffect(() => {
+    const logs = workspaceState.buildLogs;
+    for (let i = prevLogLenRef.current; i < logs.length; i++) {
+      const log = logs[i];
+      addLog({
+        level: log.source === "stderr" ? "error" : "info",
+        message: log.chunk,
+        source: "build",
+      });
+    }
+    prevLogLenRef.current = logs.length;
+  }, [workspaceState.buildLogs, addLog]);
+
+  /** Sync build phase to sandbox store. */
+  const setBuildStatus = useSandboxStore((s) => s.setBuildStatus);
+  useEffect(() => {
+    const p = workspaceState.phase;
+    if (p === "building") setBuildStatus("building");
+    else if (p === "completed") setBuildStatus("success");
+    else if (p === "error") setBuildStatus("error");
+  }, [workspaceState.phase, setBuildStatus]);
+
+  /** Show toast notifications on agent phase transitions. */
+  const prevPhaseRef = useRef(workspaceState.phase);
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    const curr = workspaceState.phase;
+    if (prev === curr) return;
+    prevPhaseRef.current = curr;
+
+    const phaseToasts: Record<string, { msg: string; type?: "success" | "error" | "info" }> = {
+      planning:  { msg: "Planning your project..." },
+      coding:    { msg: "Generating code..." },
+      building:  { msg: "Building the project..." },
+      debugging: { msg: "Debugging issues..." },
+      verifying: { msg: "Verifying the build..." },
+      completed: { msg: "Project completed!", type: "success" },
+      error:     { msg: "An error occurred", type: "error" },
+    };
+
+    const entry = phaseToasts[curr];
+    if (!entry) return;
+
+    if (entry.type === "success") toast.success(entry.msg);
+    else if (entry.type === "error") toast.error(entry.msg);
+    else toast.info(entry.msg);
+  }, [workspaceState.phase]);
+
   /**
-   * Build the complete file map from:
-   * 1. Fragment files from the latest ASSISTANT message (persisted data)
-   * 2. files_written SSE events (real-time updates during generation)
+   * Build the complete file map from fragment files (persisted data)
+   * plus real-time SSE file write events.
    */
   const fileMap = useMemo(() => {
     const map: Record<string, string> = {};
 
-    // Load files from the latest fragment (persisted after previous runs)
     if (projectQuery.data?.messages) {
       const assistantMessages = projectQuery.data.messages
         .filter((m) => m.role === "ASSISTANT" && m.fragment);
-      // Use the most recent fragment's files
       const latestFragment = assistantMessages[assistantMessages.length - 1]?.fragment;
       if (latestFragment?.files) {
         Object.assign(map, latestFragment.files);
@@ -82,23 +160,22 @@ export function Workspace({ projectId }: WorkspaceProps) {
     projectQuery.data?.sandboxUrl ??
     null;
 
-  // Loading state
+  // ─── Loading state ─────────────────────────────────────────────────
   if (projectQuery.isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <LoadingSpinner text="Loading project..." size="lg" />
-      </div>
-    );
+    return <WorkspaceSkeleton />;
   }
 
-  // Error state
+  // ─── Error state ───────────────────────────────────────────────────
   if (projectQuery.error || !projectQuery.data) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="text-center space-y-2">
+      <div className="flex h-screen items-center justify-center bg-background">
+        <div className="text-center space-y-3">
+          <div className="mx-auto h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
+            <span className="text-destructive text-lg">!</span>
+          </div>
           <h2 className="text-lg font-semibold">Project not found</h2>
-          <p className="text-sm text-muted-foreground">
-            {projectQuery.error?.message ?? "This project doesn't exist."}
+          <p className="text-sm text-muted-foreground max-w-sm">
+            {projectQuery.error?.message ?? "This project doesn't exist or you don't have access."}
           </p>
         </div>
       </div>
@@ -107,56 +184,133 @@ export function Workspace({ projectId }: WorkspaceProps) {
 
   const project = projectQuery.data;
 
+  // Helper: handle file selection from sidebar
+  const handleSelectFile = (file: string) => {
+    useWorkspaceStore.getState().openTab(file);
+    useWorkspaceStore.getState().setRightPanelTab("code");
+  };
+
+  // ─── Desktop layout ────────────────────────────────────────────────
+  if (!isMobile) {
+    return (
+      <div className="flex h-full flex-col bg-background">
+        {/* Header */}
+        <WorkspaceHeader
+          project={project}
+          latestStatus={agentEvents.latestStatus}
+          phase={workspaceState.phase}
+        />
+
+        {/* Status bar */}
+        <SandboxStatusBar />
+
+        {/* Main content */}
+        <div className="flex flex-1 overflow-hidden">
+          {/* Sidebar */}
+          <WorkspaceSidebar
+            project={project}
+            files={fileMap}
+            writtenFiles={workspaceState.writtenFiles}
+            phase={workspaceState.phase}
+            onSelectFile={handleSelectFile}
+          />
+
+          {/* Chat + Right panel with resizable divider */}
+          <ResizablePanelGroup direction="horizontal" className="flex-1">
+            {/* Chat panel */}
+            <ResizablePanel defaultSize={30} minSize={22} maxSize={45}>
+              <ChatPanel
+                projectId={projectId}
+                messages={project.messages}
+                isGenerating={project.status === "GENERATING"}
+                latestStatus={agentEvents.latestStatus}
+                chatInputRef={chatInputRef}
+              />
+            </ResizablePanel>
+
+            <ResizableHandle withHandle className="bg-border/50 hover:bg-primary/20 transition-colors data-[resize-handle-active]:bg-primary/30" />
+
+            {/* Right panel — Code / Preview / Logs / Terminal */}
+            <ResizablePanel defaultSize={70} minSize={40}>
+              <RightPanel
+                files={fileMap}
+                writtenFiles={workspaceState.writtenFiles}
+                previewUrl={previewUrl}
+                phase={workspaceState.phase}
+              />
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Mobile layout ─────────────────────────────────────────────────
+  const fileCount = Object.keys(fileMap).length;
+  const mobileTab: MobileTab =
+    mobilePanel === "chat" ? "chat" :
+    mobilePanel === "editor" ? "code" : "preview";
+
   return (
-    <div className="flex h-full flex-col">
-      {/* Workspace header */}
+    <div className="flex h-full flex-col bg-background">
+      {/* Header */}
       <WorkspaceHeader
         project={project}
         latestStatus={agentEvents.latestStatus}
         phase={workspaceState.phase}
       />
 
-      {/* Three-panel layout */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* Left panel: Chat */}
-        <ResizablePanel defaultSize={25} minSize={20} maxSize={40}>
-          <ChatPanel
-            projectId={projectId}
-            messages={project.messages}
-            isGenerating={project.status === "GENERATING"}
-            latestStatus={agentEvents.latestStatus}
-          />
-        </ResizablePanel>
+      {/* Main content */}
+      <div className="flex-1 overflow-hidden relative">
+        {/* Chat is always the base layer */}
+        <ChatPanel
+          projectId={projectId}
+          messages={project.messages}
+          isGenerating={project.status === "GENERATING"}
+          latestStatus={agentEvents.latestStatus}
+          chatInputRef={chatInputRef}
+        />
 
-        <ResizableHandle withHandle />
+        {/* Slide-over panels */}
+        <AnimatePresence>
+          {mobilePanel === "editor" && (
+            <motion.div
+              key="mobile-editor"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="absolute inset-0 bg-background z-20"
+            >
+              <MonacoEditorPanel files={fileMap} writtenFiles={workspaceState.writtenFiles} />
+            </motion.div>
+          )}
+          {mobilePanel === "logs" && (
+            <motion.div
+              key="mobile-logs"
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 300 }}
+              className="absolute inset-0 bg-background z-20"
+            >
+              <LogsPanel />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
-        {/* Center panel: Code viewer */}
-        <ResizablePanel defaultSize={40} minSize={25}>
-          <CodePanel
-            files={fileMap}
-            writtenFiles={workspaceState.writtenFiles}
-            selectedFile={selectedFile}
-            onSelectFile={setSelectedFile}
-            phase={workspaceState.phase}
-          />
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        {/* Right panel: Live preview */}
-        <ResizablePanel defaultSize={35} minSize={20}>
-          <PreviewPanel
-            previewUrl={previewUrl}
-            phase={workspaceState.phase}
-          />
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
-      {/* Bottom progress bar */}
-      <AgentProgressBar
-        phase={workspaceState.phase}
-        debugAttempt={workspaceState.debugAttempt}
-        buildLogs={workspaceState.buildLogs}
+      {/* Mobile tab bar */}
+      <MobileTabBar
+        activeTab={mobileTab}
+        onTabChange={(tab) => {
+          if (tab === "chat") setMobilePanel("chat");
+          else if (tab === "code") setMobilePanel("editor");
+          else setMobilePanel("chat"); // preview requires different handling
+        }}
+        fileCount={fileCount}
+        hasPreview={!!previewUrl}
+        isGenerating={project.status === "GENERATING"}
       />
     </div>
   );

@@ -1,11 +1,13 @@
 /**
  * @file _components/chat/typing-indicator.tsx
- * @description Animated indicator shown when the AI agent is working.
- *
- * Displays the latest agent status message with a pulsing animation.
+ * @description Premium typing indicator — animated bot avatar with status text,
+ * streaming dots animation, and subtle glow effect.
  */
 
-import { Bot, Loader2 } from "lucide-react";
+"use client";
+
+import { motion } from "framer-motion";
+import { Sparkles } from "lucide-react";
 
 interface TypingIndicatorProps {
   status: string | null;
@@ -13,16 +15,30 @@ interface TypingIndicatorProps {
 
 export function TypingIndicator({ status }: TypingIndicatorProps) {
   return (
-    <div className="flex gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted">
-        <Bot className="h-3.5 w-3.5 text-muted-foreground" />
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="flex gap-3"
+    >
+      {/* Animated avatar */}
+      <div className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-blue-500/10">
+        <Sparkles className="h-3.5 w-3.5 text-blue-400 animate-pulse" />
+        {/* Pulse ring */}
+        <span className="absolute inset-0 rounded-lg animate-ping bg-blue-400/10" />
       </div>
-      <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+
+      {/* Status bubble */}
+      <div className="flex items-center gap-2.5 rounded-xl bg-card border border-border/50 px-3.5 py-2.5 ai-active-glow">
+        {/* Typing dots */}
+        <div className="flex items-center gap-0.5">
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-blue-400" />
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-blue-400" />
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-blue-400" />
+        </div>
         <span className="text-sm text-muted-foreground">
-          {status || "AI is thinking..."}
+          {status || "Thinking..."}
         </span>
       </div>
-    </div>
+    </motion.div>
   );
 }
