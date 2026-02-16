@@ -269,6 +269,27 @@ export function createDeveloperAgentFunction(
           `[Orchestrator] Code generated: ${Object.keys(codeResult.files).length} files`,
         );
 
+        // ─── Emit preview URL early ───────────────────────────────────
+        // The sandbox dev server is already running — get the URL now
+        // so the user can see the live preview while build checks run.
+        try {
+          const earlyPreviewUrl = await sandboxProvider.getPreviewUrl(
+            sandboxId,
+            PREVIEW_PORT,
+          );
+          if (earlyPreviewUrl) {
+            eventBus.emit("preview_url_available", "Orchestrator", projectId, {
+              url: earlyPreviewUrl,
+              initial: true,
+            });
+            eventBus.emit("status_update", "Orchestrator", projectId, {
+              message: "Live preview is now available!",
+            });
+          }
+        } catch (e) {
+          console.log(`[Orchestrator] Could not get early preview URL: ${e}`);
+        }
+
         // ─────────────────────────────────────────────────────────────
         // Phase 3: BUILD CHECK
         // ─────────────────────────────────────────────────────────────
@@ -292,6 +313,12 @@ export function createDeveloperAgentFunction(
           console.log(`[Orchestrator] Build failed, entering debug cycle...`);
 
           for (let attempt = 1; attempt <= MAX_BUILD_RETRIES; attempt++) {
+            eventBus.emit("retrying", "Orchestrator", projectId, {
+              attempt,
+              maxAttempts: MAX_BUILD_RETRIES,
+              reason: lastBuildError.slice(0, 300),
+            });
+
             eventBus.emit("status_update", "Orchestrator", projectId, {
               message: `Debug attempt ${attempt}/${MAX_BUILD_RETRIES}...`,
             });

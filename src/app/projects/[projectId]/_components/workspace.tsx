@@ -1,17 +1,16 @@
 /**
  * @file _components/workspace.tsx
- * @description Master workspace orchestrator — premium 3-column layout.
+ * @description Master workspace orchestrator — 5-panel command center layout.
  *
  * Layout (desktop):
  *   ┌──────────────────────────────────────────────────────┐
- *   │                  WorkspaceHeader                     │
- *   ├──────────────────────────────────────────────────────┤
- *   │                 SandboxStatusBar                     │
- *   ├──────────┬───────────────┬───────────────────────────┤
- *   │ Sidebar  │   ChatPanel   │       RightPanel          │
- *   │ (260px)  │  (resizable)  │  (code/preview/logs/term) │
- *   │          │               │                           │
- *   └──────────┴───────────────┴───────────────────────────┘
+ *   │                    SystemBar (56px)                   │
+ *   ├──────────┬───────────────┬──────────────┬────────────┤
+ *   │ Sidebar  │  Execution    │   Code +     │  Activity  │
+ *   │ (260px)  │  Intelligence │   Preview    │   Panel    │
+ *   │          │   (30%)       │  Logs/Term   │   (20%)    │
+ *   │          │               │   (50%)      │            │
+ *   └──────────┴───────────────┴──────────────┴────────────┘
  *
  * Mobile: Chat by default, slide-over panels.
  *
@@ -34,15 +33,17 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { useSandboxStore } from "@/stores/sandbox-store";
-import { useMemo, useRef, useEffect } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 
-import { WorkspaceHeader } from "./workspace-header";
-import { SandboxStatusBar } from "./sandbox-status-bar";
+import { SystemBar } from "./system-bar";
 import { WorkspaceSidebar } from "./sidebar/workspace-sidebar";
 import { ChatPanel } from "./chat/chat-panel";
 import { RightPanel } from "./panels/right-panel";
+import { ActivityPanel } from "./panels/activity-panel";
+import { DeployPanel } from "./panels/deploy-panel";
+import { TokenModal } from "./panels/token-modal";
 import { MobileTabBar, type MobileTab } from "./mobile-tab-bar";
 import { WorkspaceSkeleton } from "./workspace-skeleton";
 
@@ -59,6 +60,10 @@ export function Workspace({ projectId }: WorkspaceProps) {
   const isMobile = useIsMobile();
 
   const { mobilePanel, setMobilePanel } = useWorkspaceStore();
+
+  // Deploy/Token modal state
+  const [deployOpen, setDeployOpen] = useState(false);
+  const [tokenModalOpen, setTokenModalOpen] = useState(false);
 
   /** Ref to the chat textarea for Ctrl+K focussing. */
   const chatInputRef = useRef<HTMLTextAreaElement>(null);
@@ -86,6 +91,7 @@ export function Workspace({ projectId }: WorkspaceProps) {
 
   /** Feed build logs into the sandbox store so panels can show them. */
   const addLog = useSandboxStore((s) => s.addLog);
+  const addTerminalLine = useSandboxStore((s) => s.addTerminalLine);
   const prevLogLenRef = useRef(0);
   useEffect(() => {
     const logs = workspaceState.buildLogs;
@@ -99,6 +105,38 @@ export function Workspace({ projectId }: WorkspaceProps) {
     }
     prevLogLenRef.current = logs.length;
   }, [workspaceState.buildLogs, addLog]);
+
+  /** Feed terminal commands into the terminal panel. */
+  const prevCmdLenRef = useRef(0);
+  useEffect(() => {
+    const cmds = workspaceState.terminalCommands;
+    for (let i = prevCmdLenRef.current; i < cmds.length; i++) {
+      const cmd = cmds[i];
+      addTerminalLine(`$ ${cmd.command}`);
+    }
+    prevCmdLenRef.current = cmds.length;
+  }, [workspaceState.terminalCommands, addTerminalLine]);
+
+  /** Feed log_stream output into terminal lines too (so user sees output). */
+  const prevTermLogRef = useRef(0);
+  useEffect(() => {
+    const logs = workspaceState.buildLogs;
+    for (let i = prevTermLogRef.current; i < logs.length; i++) {
+      const lines = logs[i].chunk.split("\n").filter(Boolean);
+      for (const line of lines) {
+        addTerminalLine(line);
+      }
+    }
+    prevTermLogRef.current = logs.length;
+  }, [workspaceState.buildLogs, addTerminalLine]);
+
+  /** Sync sandbox ID. */
+  const setSandboxId = useSandboxStore((s) => s.setSandboxId);
+  useEffect(() => {
+    if (projectQuery.data?.sandboxId) {
+      setSandboxId(projectQuery.data.sandboxId);
+    }
+  }, [projectQuery.data?.sandboxId, setSandboxId]);
 
   /** Sync build phase to sandbox store. */
   const setBuildStatus = useSandboxStore((s) => s.setBuildStatus);
@@ -136,12 +174,15 @@ export function Workspace({ projectId }: WorkspaceProps) {
   }, [workspaceState.phase]);
 
   /**
-   * Build the complete file map from fragment files (persisted data)
-   * plus real-time SSE file write events.
+   * Build the complete file map from:
+   * 1. Fragment files (persisted data from previous runs)
+   * 2. Real-time SSE file_content events (current run)
+   * This ensures the editor shows files AS they're written.
    */
   const fileMap = useMemo(() => {
     const map: Record<string, string> = {};
 
+    // Base: persisted fragment from completed run
     if (projectQuery.data?.messages) {
       const assistantMessages = projectQuery.data.messages
         .filter((m) => m.role === "ASSISTANT" && m.fragment);
@@ -151,14 +192,51 @@ export function Workspace({ projectId }: WorkspaceProps) {
       }
     }
 
-    return map;
-  }, [projectQuery.data?.messages]);
+    // Overlay: real-time file contents from SSE (current run)
+    if (workspaceState.fileContents) {
+      Object.assign(map, workspaceState.fileContents);
+    }
 
-  /** Determine the preview URL — from completed event or project data. */
+    return map;
+  }, [projectQuery.data?.messages, workspaceState.fileContents]);
+
+  /** Determine the preview URL — from early SSE event, completed event, or project data. */
   const previewUrl =
     workspaceState.previewUrl ??
     projectQuery.data?.sandboxUrl ??
     null;
+
+  /**
+   * Auto-open files in the editor as they're written.
+   * Opens the first written file if no tab is open yet.
+   */
+  const openTab = useWorkspaceStore((s) => s.openTab);
+  const activeFile = useWorkspaceStore((s) => s.activeFile);
+  const setRightPanelTab = useWorkspaceStore((s) => s.setRightPanelTab);
+  const prevWrittenRef = useRef(0);
+  useEffect(() => {
+    const written = workspaceState.writtenFiles;
+    if (written.length > prevWrittenRef.current) {
+      for (let i = prevWrittenRef.current; i < written.length; i++) {
+        const file = written[i];
+        if (!activeFile || file.endsWith("page.tsx") || file.endsWith("layout.tsx")) {
+          openTab(file);
+          setRightPanelTab("code");
+        }
+      }
+      prevWrittenRef.current = written.length;
+    }
+  }, [workspaceState.writtenFiles, openTab, activeFile, setRightPanelTab]);
+
+  /**
+   * Auto-switch to preview tab when preview URL becomes available.
+   */
+  const previewUrlSwitchedRef = useRef(false);
+  useEffect(() => {
+    if (previewUrl && !previewUrlSwitchedRef.current && workspaceState.phase !== "completed") {
+      previewUrlSwitchedRef.current = true;
+    }
+  }, [previewUrl, workspaceState.phase]);
 
   // ─── Loading state ─────────────────────────────────────────────────
   if (projectQuery.isLoading) {
@@ -183,6 +261,7 @@ export function Workspace({ projectId }: WorkspaceProps) {
   }
 
   const project = projectQuery.data;
+  const buildStatus = useSandboxStore.getState().buildStatus as "idle" | "building" | "success" | "failed";
 
   // Helper: handle file selection from sidebar
   const handleSelectFile = (file: string) => {
@@ -194,17 +273,17 @@ export function Workspace({ projectId }: WorkspaceProps) {
   if (!isMobile) {
     return (
       <div className="flex h-full flex-col bg-background">
-        {/* Header */}
-        <WorkspaceHeader
+        {/* System Bar — replaces WorkspaceHeader + SandboxStatusBar */}
+        <SystemBar
           project={project}
-          latestStatus={agentEvents.latestStatus}
           phase={workspaceState.phase}
+          latestStatus={agentEvents.latestStatus}
+          currentAgent={workspaceState.currentAgent}
+          onOpenDeploy={() => setDeployOpen(true)}
+          onOpenTokenModal={() => setTokenModalOpen(true)}
         />
 
-        {/* Status bar */}
-        <SandboxStatusBar />
-
-        {/* Main content */}
+        {/* Main content — Sidebar + 3-panel resizable */}
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar */}
           <WorkspaceSidebar
@@ -213,25 +292,28 @@ export function Workspace({ projectId }: WorkspaceProps) {
             writtenFiles={workspaceState.writtenFiles}
             phase={workspaceState.phase}
             onSelectFile={handleSelectFile}
+            latestStatus={agentEvents.latestStatus}
+            currentAgent={workspaceState.currentAgent}
           />
 
-          {/* Chat + Right panel with resizable divider */}
+          {/* Execution Intelligence + Code/Preview + Activity — resizable 3-way split */}
           <ResizablePanelGroup direction="horizontal" className="flex-1">
-            {/* Chat panel */}
-            <ResizablePanel defaultSize={30} minSize={22} maxSize={45}>
+            {/* Execution Intelligence Panel (formerly Chat) — 30% */}
+            <ResizablePanel defaultSize={28} minSize={20} maxSize={40}>
               <ChatPanel
                 projectId={projectId}
                 messages={project.messages}
                 isGenerating={project.status === "GENERATING"}
                 latestStatus={agentEvents.latestStatus}
                 chatInputRef={chatInputRef}
+                phase={workspaceState.phase}
               />
             </ResizablePanel>
 
             <ResizableHandle withHandle className="bg-border/50 hover:bg-primary/20 transition-colors data-[resize-handle-active]:bg-primary/30" />
 
-            {/* Right panel — Code / Preview / Logs / Terminal */}
-            <ResizablePanel defaultSize={70} minSize={40}>
+            {/* Code / Preview / Logs / Terminal — 52% */}
+            <ResizablePanel defaultSize={52} minSize={35}>
               <RightPanel
                 files={fileMap}
                 writtenFiles={workspaceState.writtenFiles}
@@ -239,8 +321,34 @@ export function Workspace({ projectId }: WorkspaceProps) {
                 phase={workspaceState.phase}
               />
             </ResizablePanel>
+
+            <ResizableHandle withHandle className="bg-border/50 hover:bg-primary/20 transition-colors data-[resize-handle-active]:bg-primary/30" />
+
+            {/* Activity Panel — 20% */}
+            <ResizablePanel defaultSize={20} minSize={14} maxSize={30}>
+              <ActivityPanel
+                events={agentEvents.events}
+                phase={workspaceState.phase}
+                currentAgent={workspaceState.currentAgent}
+                latestStatus={agentEvents.latestStatus}
+              />
+            </ResizablePanel>
           </ResizablePanelGroup>
         </div>
+
+        {/* Overlays */}
+        <DeployPanel
+          open={deployOpen}
+          onClose={() => setDeployOpen(false)}
+          buildStatus={buildStatus}
+          previewUrl={previewUrl}
+        />
+        <TokenModal
+          open={tokenModalOpen}
+          onClose={() => setTokenModalOpen(false)}
+          messageCount={project.messages.length}
+          fileCount={Object.keys(fileMap).length}
+        />
       </div>
     );
   }
@@ -253,11 +361,14 @@ export function Workspace({ projectId }: WorkspaceProps) {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Header */}
-      <WorkspaceHeader
+      {/* System Bar */}
+      <SystemBar
         project={project}
-        latestStatus={agentEvents.latestStatus}
         phase={workspaceState.phase}
+        latestStatus={agentEvents.latestStatus}
+        currentAgent={workspaceState.currentAgent}
+        onOpenDeploy={() => setDeployOpen(true)}
+        onOpenTokenModal={() => setTokenModalOpen(true)}
       />
 
       {/* Main content */}
@@ -269,6 +380,7 @@ export function Workspace({ projectId }: WorkspaceProps) {
           isGenerating={project.status === "GENERATING"}
           latestStatus={agentEvents.latestStatus}
           chatInputRef={chatInputRef}
+          phase={workspaceState.phase}
         />
 
         {/* Slide-over panels */}
@@ -306,11 +418,25 @@ export function Workspace({ projectId }: WorkspaceProps) {
         onTabChange={(tab) => {
           if (tab === "chat") setMobilePanel("chat");
           else if (tab === "code") setMobilePanel("editor");
-          else setMobilePanel("chat"); // preview requires different handling
+          else setMobilePanel("chat");
         }}
         fileCount={fileCount}
         hasPreview={!!previewUrl}
         isGenerating={project.status === "GENERATING"}
+      />
+
+      {/* Overlays */}
+      <DeployPanel
+        open={deployOpen}
+        onClose={() => setDeployOpen(false)}
+        buildStatus={buildStatus}
+        previewUrl={previewUrl}
+      />
+      <TokenModal
+        open={tokenModalOpen}
+        onClose={() => setTokenModalOpen(false)}
+        messageCount={project.messages.length}
+        fileCount={fileCount}
       />
     </div>
   );

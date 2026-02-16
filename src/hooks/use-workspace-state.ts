@@ -2,8 +2,9 @@
  * @file hooks/use-workspace-state.ts
  * @description Derives workspace-level state from the SSE event stream.
  *
- * Maps raw AgentEvents into named phases, file lists, build logs, and
- * preview URLs that the workspace child components consume.
+ * Maps raw AgentEvents into named phases, file lists, build logs,
+ * terminal commands, real-time file contents, preview URLs, and
+ * agent status that the workspace child components consume.
  */
 
 "use client";
@@ -26,6 +27,15 @@ export type WorkspacePhase =
   | "completed"
   | "error";
 
+export interface TerminalCommand {
+  /** The command that was executed. */
+  command: string;
+  /** Which agent executed it. */
+  agent?: string;
+  /** Timestamp of the command. */
+  timestamp: number;
+}
+
 export interface WorkspaceState {
   /** The current phase of the agent run. */
   phase: WorkspacePhase;
@@ -38,9 +48,13 @@ export interface WorkspaceState {
   } | null;
   /** List of file paths that have been written so far. */
   writtenFiles: string[];
+  /** Real-time file contents map (path → content) from SSE events. */
+  fileContents: Record<string, string>;
   /** Raw build/execution log lines. */
   buildLogs: Array<{ source: "stdout" | "stderr"; chunk: string }>;
-  /** The live preview URL once the run completes. */
+  /** Terminal commands executed in the sandbox. */
+  terminalCommands: TerminalCommand[];
+  /** The live preview URL — available early from preview_url_available event. */
   previewUrl: string | null;
   /** The agent's summary text from the completed event. */
   summary: string | null;
@@ -50,6 +64,10 @@ export interface WorkspaceState {
   debugAttempt: number;
   /** Max debug attempts. */
   maxDebugAttempts: number;
+  /** The name of the currently active agent. */
+  currentAgent: string | null;
+  /** The latest status message from the running agent. */
+  latestAgentStatus: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +97,7 @@ function derivePhase(events: AgentEvent[]): WorkspacePhase {
         return "building";
       case "code_generation_started":
       case "files_written":
+      case "terminal_command":
         return "coding";
       case "planning_started":
       case "planning_completed":
@@ -112,16 +131,39 @@ export function useWorkspaceState(events: AgentEvent[]): WorkspaceState {
       .filter((e) => e.type === "files_written")
       .flatMap((e) => (e.payload as { paths: string[] }).paths);
 
+    // Collect real-time file contents from files_written events
+    const fileContents: Record<string, string> = {};
+    for (const e of events) {
+      if (e.type === "files_written") {
+        const payload = e.payload as { files?: Record<string, string> };
+        if (payload.files) {
+          Object.assign(fileContents, payload.files);
+        }
+      }
+    }
+
     // Collect build logs
     const buildLogs = events
       .filter((e) => e.type === "log_stream")
       .map((e) => e.payload as { source: "stdout" | "stderr"; chunk: string });
 
-    // Get preview URL from completed event
+    // Collect terminal commands
+    const terminalCommands: TerminalCommand[] = events
+      .filter((e) => e.type === "terminal_command")
+      .map((e) => ({
+        command: (e.payload as { command: string }).command,
+        agent: (e.payload as { agent?: string }).agent,
+        timestamp: e.timestamp,
+      }));
+
+    // Get preview URL — prefer early preview_url_available, fall back to completed
+    const previewUrlEvent = events.find((e) => e.type === "preview_url_available");
     const completedEvent = events.find((e) => e.type === "completed");
-    const previewUrl = completedEvent
-      ? (completedEvent.payload as { previewUrl: string }).previewUrl
-      : null;
+    const previewUrl = previewUrlEvent
+      ? (previewUrlEvent.payload as { url: string }).url
+      : completedEvent
+        ? (completedEvent.payload as { previewUrl: string }).previewUrl
+        : null;
 
     // Get summary from completed event
     const summary = completedEvent
@@ -144,16 +186,30 @@ export function useWorkspaceState(events: AgentEvent[]): WorkspaceState {
       ? (lastRetry.payload as { maxAttempts: number }).maxAttempts
       : 5;
 
+    // Derive current agent from the latest event's agentName
+    const lastEvent = events[events.length - 1];
+    const currentAgent = lastEvent?.agentName ?? null;
+
+    // Get latest status message
+    const statusEvents = events.filter((e) => e.type === "status_update");
+    const latestAgentStatus = statusEvents.length > 0
+      ? (statusEvents[statusEvents.length - 1].payload as { message: string }).message
+      : null;
+
     return {
       phase,
       plan,
       writtenFiles: [...new Set(writtenFiles)],
+      fileContents,
       buildLogs,
+      terminalCommands,
       previewUrl,
       summary,
       fatalError,
       debugAttempt,
       maxDebugAttempts,
+      currentAgent,
+      latestAgentStatus,
     };
   }, [events]);
 }

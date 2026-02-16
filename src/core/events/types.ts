@@ -26,6 +26,8 @@ export type AgentEventType =
   // Code generation phase
   | "code_generation_started"
   | "files_written"
+  // Terminal / command execution during coding
+  | "terminal_command"
   // Build / execution phase
   | "execution_started"
   | "log_stream"
@@ -38,6 +40,8 @@ export type AgentEventType =
   // Verification phase
   | "verification_started"
   | "verification_completed"
+  // Preview URL available (emitted early, before completion)
+  | "preview_url_available"
   // Terminal states
   | "completed"
   | "fatal_error"
@@ -72,6 +76,15 @@ export interface FilesWrittenPayload {
   paths: string[];
   /** Total file count so far. */
   totalFiles: number;
+  /** Actual file contents (path → content map) for real-time editor updates. */
+  files?: Record<string, string>;
+}
+
+export interface TerminalCommandPayload {
+  /** The command being executed in the sandbox. */
+  command: string;
+  /** Which agent is executing this command. */
+  agent?: string;
 }
 
 export interface ExecutionStartedPayload {
@@ -137,6 +150,13 @@ export interface VerificationCompletedPayload {
   results: Array<{ check: string; passed: boolean; detail?: string }>;
 }
 
+export interface PreviewUrlAvailablePayload {
+  /** The live preview URL. */
+  url: string;
+  /** Whether this is the first time the URL is available. */
+  initial: boolean;
+}
+
 export interface CompletedPayload {
   /** Live preview URL. */
   previewUrl: string;
@@ -171,6 +191,7 @@ export interface AgentEventPayloadMap {
   planning_completed: PlanningCompletedPayload;
   code_generation_started: CodeGenerationStartedPayload;
   files_written: FilesWrittenPayload;
+  terminal_command: TerminalCommandPayload;
   execution_started: ExecutionStartedPayload;
   log_stream: LogStreamPayload;
   execution_completed: ExecutionCompletedPayload;
@@ -180,6 +201,7 @@ export interface AgentEventPayloadMap {
   retrying: RetryingPayload;
   verification_started: VerificationStartedPayload;
   verification_completed: VerificationCompletedPayload;
+  preview_url_available: PreviewUrlAvailablePayload;
   completed: CompletedPayload;
   fatal_error: FatalErrorPayload;
   status_update: StatusUpdatePayload;

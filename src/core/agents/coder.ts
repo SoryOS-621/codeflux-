@@ -81,7 +81,7 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
           handler: async (args: Record<string, unknown>) => {
             const result = await originalHandler(args);
 
-            // Emit files_written event after successful write
+            // Emit files_written event with CONTENTS after successful write
             const files = args.files as
               | Array<{ path: string; content: string }>
               | undefined;
@@ -90,9 +90,16 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
               typeof result === "string" &&
               !String(result).startsWith("Error")
             ) {
+              // Build path→content map for real-time editor updates
+              const fileContents: Record<string, string> = {};
+              for (const f of files) {
+                fileContents[f.path] = f.content;
+              }
+
               this.emit(context, "files_written", {
                 paths: files.map((f) => f.path),
                 totalFiles: Object.keys(state.files).length,
+                files: fileContents,
               });
 
               // Emit a status update for each batch of files
@@ -115,11 +122,22 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
           handler: async (args: Record<string, unknown>) => {
             const command = args.command as string;
 
+            // Emit terminal_command so user sees exactly what command is running
+            this.emit(context, "terminal_command", {
+              command,
+              agent: this.name,
+            });
+
             // Emit status for notable terminal commands
             if (command.startsWith("npm install")) {
               this.emitStatus(
                 context,
                 `Installing: ${command.replace("npm install ", "").replace(" --yes", "")}`,
+              );
+            } else {
+              this.emitStatus(
+                context,
+                `Running: ${command.length > 60 ? command.slice(0, 60) + "..." : command}`,
               );
             }
 
@@ -127,10 +145,25 @@ export class CoderAgent extends BaseAgent<CoderInput, CoderOutput> {
 
             // Stream terminal output as log events
             if (typeof result === "string" && result.length > 0) {
-              this.emit(context, "log_stream", {
-                source: "stdout",
-                chunk: result.slice(0, 2000), // Cap at 2KB per chunk
-              });
+              // Split long output into chunks for streaming
+              const lines = result.split("\n");
+              let chunk = "";
+              for (const line of lines) {
+                if (chunk.length + line.length + 1 > 1500) {
+                  this.emit(context, "log_stream", {
+                    source: "stdout" as const,
+                    chunk,
+                  });
+                  chunk = "";
+                }
+                chunk += (chunk ? "\n" : "") + line;
+              }
+              if (chunk) {
+                this.emit(context, "log_stream", {
+                  source: "stdout" as const,
+                  chunk,
+                });
+              }
             }
 
             return result;

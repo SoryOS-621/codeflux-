@@ -1,7 +1,7 @@
 /**
  * @file _components/sidebar/workspace-sidebar.tsx
- * @description Collapsible left sidebar with project name, file tree,
- * agent status panel, deploy button, settings, and token meter.
+ * @description Collapsible left sidebar with file tree and enhanced agent pipeline.
+ * Token usage and deploy actions moved to SystemBar.
  */
 
 "use client";
@@ -11,14 +11,12 @@ import {
   PanelLeftClose,
   PanelLeft,
   Settings,
-  Rocket,
   Plus,
   FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Progress } from "@/components/ui/progress";
 import {
   Tooltip,
   TooltipContent,
@@ -26,7 +24,6 @@ import {
   TooltipProvider,
 } from "@/components/ui/tooltip";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import { useSandboxStore } from "@/stores/sandbox-store";
 import { Logo } from "@/components/shared/logo";
 import { FileTreeView } from "./file-tree";
 import { AgentStatusPanel } from "./agent-status-panel";
@@ -39,6 +36,8 @@ interface WorkspaceSidebarProps {
   writtenFiles: string[];
   phase: WorkspacePhase;
   onSelectFile: (file: string) => void;
+  latestStatus?: string | null;
+  currentAgent?: string | null;
 }
 
 export function WorkspaceSidebar({
@@ -47,10 +46,10 @@ export function WorkspaceSidebar({
   writtenFiles,
   phase,
   onSelectFile,
+  latestStatus,
+  currentAgent,
 }: WorkspaceSidebarProps) {
   const { sidebarOpen, toggleSidebar } = useWorkspaceStore();
-  const { tokensUsed, tokensLimit, deployStatus } = useSandboxStore();
-  const tokenPercent = Math.min((tokensUsed / tokensLimit) * 100, 100);
 
   return (
     <TooltipProvider>
@@ -115,48 +114,26 @@ export function WorkspaceSidebar({
 
                 <Separator />
 
-                {/* Agent Status */}
-                <AgentStatusPanel phase={phase} />
+                {/* Agent Pipeline */}
+                <AgentStatusPanel
+                  phase={phase}
+                  latestStatus={latestStatus}
+                  currentAgent={currentAgent}
+                />
               </div>
             </ScrollArea>
 
-            {/* Bottom section */}
-            <div className="border-t p-3 space-y-3 shrink-0">
-              {/* Token Usage */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    Token Usage
-                  </span>
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {(tokensUsed / 1000).toFixed(1)}k / {(tokensLimit / 1000).toFixed(0)}k
-                  </span>
-                </div>
-                <Progress
-                  value={tokenPercent}
-                  className="h-1"
-                />
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  className="flex-1 gap-1.5 text-xs h-8"
-                  disabled={deployStatus === "deploying"}
-                >
-                  <Rocket className="h-3 w-3" />
-                  {deployStatus === "deploying" ? "Deploying..." : "Deploy"}
-                </Button>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="outline" size="icon" className="h-8 w-8 shrink-0">
-                      <Settings className="h-3.5 w-3.5" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right">Settings</TooltipContent>
-                </Tooltip>
-              </div>
+            {/* Minimal bottom section — settings only */}
+            <div className="border-t p-3 shrink-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full gap-1.5 text-xs h-8">
+                    <Settings className="h-3.5 w-3.5" />
+                    Settings
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Workspace Settings</TooltipContent>
+              </Tooltip>
             </div>
           </motion.aside>
         ) : (
@@ -184,14 +161,6 @@ export function WorkspaceSidebar({
 
             <div className="flex-1" />
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <Rocket className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Deploy</TooltipContent>
-            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8">

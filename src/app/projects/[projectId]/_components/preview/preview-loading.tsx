@@ -39,21 +39,27 @@ export function PreviewLoading({ phase }: PreviewLoadingProps) {
 function getContent(phase: WorkspacePhase) {
   switch (phase) {
     case "planning":
+      return {
+        icon: Loader2,
+        title: "Planning your app...",
+        description:
+          "The AI is planning the architecture. Preview will appear once coding starts.",
+      };
     case "coding":
       return {
         icon: Loader2,
-        title: "Building your app...",
+        title: "Writing code...",
         description:
-          "The live preview will appear here once the sandbox is ready.",
+          "Files are being created in the sandbox. Preview will appear momentarily.",
       };
     case "building":
     case "debugging":
     case "verifying":
       return {
         icon: Loader2,
-        title: "Starting preview server...",
+        title: "Compiling & verifying...",
         description:
-          "Compiling and running your application in a cloud sandbox.",
+          "Running type checks and verifying the build in the cloud sandbox.",
       };
     case "error":
       return {
